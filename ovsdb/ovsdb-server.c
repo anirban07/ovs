@@ -177,14 +177,12 @@ main_loop(struct server_config *config,
     long long int status_timer = LLONG_MIN;
 
     VLOG_INFO("\n~~~~~~~ In ovsdb-server.c main_loop() ~~~~~~~~\n\n");
-    VLOG_INFO("\n~~~~~~~ In ovsdb-server.c main_loop() ~~~~~~~~\n\n");
+    VLOG_INFO("is_backup:%d\n", *is_backup);
 
     *exiting = false;
     ssl_error = NULL;
     remotes_error = NULL;
     while (!*exiting) {
-        printf("\n~~~~~~~ In ovsdb-server.c main_loop() inner loop ~~~~~~~~\n\n");
-        xasprintf("\n~~~~~~~ In ovsdb-server.c main_loop() inner loop ~~~~~~~~\n\n");
         memory_run();
         if (memory_should_report()) {
             struct simap usage;
@@ -291,8 +289,6 @@ main_loop(struct server_config *config,
 int
 main(int argc, char *argv[])
 {
-    printf("\n~~~~~~~ In ovsdb-server.c main() ~~~~~~~~\n\n");
-    xasprintf("\n~~~~~~~ In ovsdb-server.c main() ~~~~~~~~\n\n");
     char *unixctl_path = NULL;
     char *run_command = NULL;
     struct unixctl_server *unixctl;

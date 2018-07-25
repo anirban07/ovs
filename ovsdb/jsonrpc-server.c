@@ -975,6 +975,8 @@ static void
 ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                   struct jsonrpc_msg *request)
 {
+    VLOG_INFO("\n\n~~~~ In jsonrpc-server.c ~~~~\n");
+    VLOG_INFO("request:\n");
     struct jsonrpc_msg *reply;
 
     if (!strcmp(request->method, "transact") ||

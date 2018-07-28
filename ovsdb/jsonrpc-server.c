@@ -975,11 +975,8 @@ static void
 ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                   struct jsonrpc_msg *request)
 {
-    VLOG_INFO("\n\n~~~~ In jsonrpc-server.c ~~~~\n");
-    VLOG_INFO("request:\n");
-    VLOG_INFO("\tjsonrpc_msg_type: %d\n", request->type);
     VLOG_INFO("\tmethod: %s\n", request->method);
-    printf("\n~~~~\n%s\n~~~~\n", (char *) (s->js->rpc->input_buffer));
+    VLOG_INFO("\n~~~~\n%s\n~~~~\n", (char *) (s->js->rpc->input_buffer));
 
     struct jsonrpc_msg *reply;
 

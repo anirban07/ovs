@@ -20,11 +20,9 @@
 
 #include <errno.h>
 
-#include "byteq.h"
 #include "openvswitch/dynamic-string.h"
 #include "fatal-signal.h"
 #include "openvswitch/json.h"
-#include "openvswitch/list.h"
 #include "openvswitch/ofpbuf.h"
 #include "ovs-thread.h"
 #include "openvswitch/poll-loop.h"
@@ -36,22 +34,6 @@
 
 VLOG_DEFINE_THIS_MODULE(jsonrpc);
 
-struct jsonrpc {
-    struct stream *stream;
-    char *name;
-    int status;
-
-    /* Input. */
-    struct byteq input;
-    uint8_t input_buffer[512];
-    struct json_parser *parser;
-
-    /* Output. */
-    struct ovs_list output;     /* Contains "struct ofpbuf"s. */
-    size_t output_count;        /* Number of elements in "output". */
-    size_t backlog;
-};
-
 /* Rate limit for error messages. */
 static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(5, 5);
 

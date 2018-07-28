@@ -23,6 +23,9 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include "openvswitch/types.h"
+#include "byteq.h"
+#include "openvswitch/list.h"
+#include "svec.h"
 
 struct json;
 struct jsonrpc_msg;
@@ -70,6 +73,37 @@ enum jsonrpc_msg_type {
     JSONRPC_REPLY,             /* Successful reply. */
     JSONRPC_ERROR              /* Error reply. */
 };
+
+struct jsonrpc {
+    struct stream *stream;
+    char *name;
+    int status;
+
+    /* Input. */
+    struct byteq input;
+    uint8_t input_buffer[512];
+    struct json_parser *parser;
+
+    /* Output. */
+    struct ovs_list output;     /* Contains "struct ofpbuf"s. */
+    size_t output_count;        /* Number of elements in "output". */
+    size_t backlog;
+};
+
+/* A JSON-RPC session with reconnection. */
+struct jsonrpc_session {
+    struct svec remotes;
+    size_t next_remote;
+
+    struct reconnect *reconnect;
+    struct jsonrpc *rpc;
+    struct stream *stream;
+    struct pstream *pstream;
+    int last_error;
+    unsigned int seqno;
+    uint8_t dscp;
+};
+
 
 struct jsonrpc_msg {
     enum jsonrpc_msg_type type;

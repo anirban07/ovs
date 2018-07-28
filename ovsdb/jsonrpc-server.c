@@ -552,6 +552,7 @@ ovsdb_jsonrpc_session_run(struct ovsdb_jsonrpc_session *s)
         msg = jsonrpc_session_recv(s->js);
         if (msg) {
             if (msg->type == JSONRPC_REQUEST) {
+                VLOG_INFO("\n~~~~\n%s\n~~~~\n", (char *) s->js->rpc->input);
                 ovsdb_jsonrpc_session_got_request(s, msg);
             } else if (msg->type == JSONRPC_NOTIFY) {
                 ovsdb_jsonrpc_session_got_notify(s, msg);

@@ -552,7 +552,6 @@ ovsdb_jsonrpc_session_run(struct ovsdb_jsonrpc_session *s)
         msg = jsonrpc_session_recv(s->js);
         if (msg) {
             if (msg->type == JSONRPC_REQUEST) {
-                VLOG_INFO("\n~~~~\n%s\n~~~~\n", (char *) s->js->rpc->input);
                 ovsdb_jsonrpc_session_got_request(s, msg);
             } else if (msg->type == JSONRPC_NOTIFY) {
                 ovsdb_jsonrpc_session_got_notify(s, msg);
@@ -980,6 +979,7 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
     VLOG_INFO("request:\n");
     VLOG_INFO("\tjsonrpc_msg_type: %d\n", request->type);
     VLOG_INFO("\tmethod: %s\n", request->method);
+    printf("\n~~~~\n%s\n~~~~\n", (char *) (s->js->rpc->input));
 
     struct jsonrpc_msg *reply;
 

@@ -30,7 +30,7 @@
 #include "openvswitch/poll-loop.h"
 #include "reconnect.h"
 #include "stream.h"
-#include "svec.h"
+// #include "svec.h"
 #include "timeval.h"
 #include "openvswitch/vlog.h"
 
@@ -774,21 +774,6 @@ jsonrpc_msg_to_string(const struct jsonrpc_msg *m)
     return s;
 }
 
-/* A JSON-RPC session with reconnection. */
-
-struct jsonrpc_session {
-    struct svec remotes;
-    size_t next_remote;
-
-    struct reconnect *reconnect;
-    struct jsonrpc *rpc;
-    struct stream *stream;
-    struct pstream *pstream;
-    int last_error;
-    unsigned int seqno;
-    uint8_t dscp;
-};
-
 static void
 jsonrpc_session_pick_remote(struct jsonrpc_session *s)
 {

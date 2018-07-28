@@ -32,6 +32,8 @@
 
 #include <stdio.h>
 #include "openvswitch/shash.h"
+#include "svec.h"
+
 
 #ifdef  __cplusplus
 extern "C" {
@@ -72,6 +74,21 @@ struct json {
         double real;
         char *string;
     };
+};
+
+
+/* A JSON-RPC session with reconnection. */
+struct jsonrpc_session {
+    struct svec remotes;
+    size_t next_remote;
+
+    struct reconnect *reconnect;
+    struct jsonrpc *rpc;
+    struct stream *stream;
+    struct pstream *pstream;
+    int last_error;
+    unsigned int seqno;
+    uint8_t dscp;
 };
 
 struct json *json_null_create(void);

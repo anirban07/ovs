@@ -976,7 +976,7 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                   struct jsonrpc_msg *request)
 {
     VLOG_INFO("\tmethod: %s\n", request->method);
-    VLOG_INFO("js_seqno:%sd seqno:%d id:%d\n", s->js_seqno, s->js->seqno, request->id->integer);
+    VLOG_INFO("js_seqno:%d seqno:%d id:%d\n", s->js_seqno, s->js->seqno, request->id->integer);    
     VLOG_INFO("\n~~~~\n%s\n~~~~\n", (char *) (s->js->rpc->input_buffer));
 
     struct jsonrpc_msg *reply;

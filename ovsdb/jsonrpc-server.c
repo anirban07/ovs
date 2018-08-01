@@ -975,7 +975,7 @@ static void
 ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                   struct jsonrpc_msg *request)
 {
-    VLOG_INFO("\tmethod: %s\n", request->method);
+    VLOG_INFO("method: %s from: %s\n", request->method, s->js->remotes.names[0]);
     VLOG_INFO("\nparams:\n%s\n", json_to_string(request->params, JSSF_PRETTY));
 
     struct jsonrpc_msg *reply;

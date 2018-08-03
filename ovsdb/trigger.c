@@ -30,6 +30,7 @@
 #include "transaction.h"
 #include "openvswitch/vlog.h"
 #include "util.h"
+#include "ovsdb-intf.h"
 
 VLOG_DEFINE_THIS_MODULE(trigger);
 
@@ -64,6 +65,7 @@ ovsdb_trigger_init(struct ovsdb_session *session, struct ovsdb *db,
 void
 ovsdb_trigger_destroy(struct ovsdb_trigger *trigger)
 {
+    /* TODO change this to call the interface */
     ovsdb_txn_progress_destroy(trigger->progress);
     ovs_list_remove(&trigger->node);
     jsonrpc_msg_destroy(trigger->request);
@@ -94,6 +96,7 @@ ovsdb_trigger_cancel(struct ovsdb_trigger *trigger, const char *reason)
     if (trigger->progress) {
         /* The transaction still might complete asynchronously, but we can stop
          * tracking it. */
+        /* TODO change this to call the interface */
         ovsdb_txn_progress_destroy(trigger->progress);
         trigger->progress = NULL;
     }
@@ -188,6 +191,23 @@ static bool
 ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
 {
     /* Handle "initialized" state. */
+
+    uint32_t ret_error = 0;
+    OVSDB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
+    POVSDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
+
+    ret_error = ovsdb_provider_init(&pOvsdbFnTable);
+    if (ret_error) {
+        VLOG_ERR("Unable to initialize provider: %d", ret_error);
+        return false;
+    }
+    ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext,
+        t->db, t->session, t->read_only);
+    if (ret_error) {
+        VLOG_ERR("Unable to fetch context: %d", ret_error);
+        ovsdb_provider_shutdown(pOvsdbFnTable);
+        return false;
+    }
     if (!t->reply) {
         ovs_assert(!t->progress);
 
@@ -197,10 +217,10 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
             bool durable;
 
             struct json *result;
-            txn = ovsdb_execute_compose(
-                t->db, t->session, t->request->params, t->read_only,
-                t->role, t->id, now - t->created, &t->timeout_msec,
-                &durable, &result);
+
+            txn = pOvsdbFnTable->pfn_db_execute_compose(pOvsdbIntfContext,
+                t->request->params, t->role, t->id, now - t->created,
+                &t->timeout_msec, &durable, &result);
             if (!txn) {
                 if (result) {
                     /* Complete.  There was an error but we still represent it
@@ -210,12 +230,16 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
                     /* Unsatisfied "wait" condition.  Take no action now, retry
                      * later. */
                 }
+                pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+                ovsdb_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
             /* Transition to "committing" state. */
             t->reply = jsonrpc_create_reply(result, t->request->id);
-            t->progress = ovsdb_txn_propose_commit(txn, durable);
+            /* TODO change this to call the interface */
+            t->progress = pOvsdbFnTable->pfn_db_txn_propose_commit(
+                pOvsdbIntfContext, txn, durable);
         } else if (!strcmp(t->request->method, "convert")) {
             /* Permission check. */
             if (t->role && *t->role) {
@@ -225,6 +249,8 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
                         "\"convert\" of database %s "
                         "(only the root role may convert databases)",
                         t->id, t->role, t->db->schema->name));
+                pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+                ovsdb_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -233,6 +259,8 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
             if (params->type != JSON_ARRAY || params->array.n != 2) {
                 trigger_convert_error(t, ovsdb_syntax_error(params, NULL,
                                                             "array expected"));
+                pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+                ovsdb_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -253,6 +281,8 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
             if (error) {
                 ovsdb_schema_destroy(new_schema);
                 trigger_convert_error(t, error);
+                pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+                ovsdb_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -275,18 +305,24 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
          * the file-based storage isn't implemented to read back the
          * transactions that we write (which is an ugly broken abstraction but
          * it's what we have). */
-        if (ovsdb_txn_progress_is_complete(t->progress)
-            && !ovsdb_txn_progress_get_error(t->progress)) {
+        /* TODO change this to call the interface */
+        if (pOvsdbFnTable->pfn_db_txn_progress_is_complete(pOvsdbIntfContext,
+            t->progress) && !ovsdb_txn_progress_get_error(t->progress)) {
             if (txn) {
                 ovsdb_txn_complete(txn);
             }
+            /* TODO change this to call the interface */
             ovsdb_txn_progress_destroy(t->progress);
             t->progress = NULL;
             ovsdb_trigger_complete(t);
             if (newdb) {
                 ovsdb_replace(t->db, newdb);
+                pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+                ovsdb_provider_shutdown(pOvsdbFnTable);
                 return true;
             }
+            pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+            ovsdb_provider_shutdown(pOvsdbFnTable);
             return false;
         }
         ovsdb_destroy(newdb);
@@ -301,13 +337,18 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
 
     /* Handle "committing" state. */
     if (t->progress) {
-        if (!ovsdb_txn_progress_is_complete(t->progress)) {
+        /* TODO change this to call the interface */
+        if (!pOvsdbFnTable->pfn_db_txn_progress_is_complete(pOvsdbIntfContext,
+            t->progress)) {
+            pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+            ovsdb_provider_shutdown(pOvsdbFnTable);
             return false;
         }
 
         /* Transition to "complete". */
         struct ovsdb_error *error
             = ovsdb_error_clone(ovsdb_txn_progress_get_error(t->progress));
+        /* TODO change this to call the interface */
         ovsdb_txn_progress_destroy(t->progress);
         t->progress = NULL;
 
@@ -337,6 +378,8 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
             ovsdb_trigger_complete(t);
         }
 
+        pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+        ovsdb_provider_shutdown(pOvsdbFnTable);
         return false;
     }
 

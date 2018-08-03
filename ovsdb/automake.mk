@@ -19,6 +19,9 @@ ovsdb_libovsdb_la_SOURCES = \
 	ovsdb/mutation.c \
 	ovsdb/mutation.h \
 	ovsdb/ovsdb.c \
+	ovsdb/ovsdb-intf.h \
+	ovsdb/ovsdb-provider.h \
+	ovsdb/ovsdb-provider.c \
 	ovsdb/ovsdb.h \
 	ovsdb/monitor.c \
 	ovsdb/monitor.h \

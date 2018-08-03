@@ -28,6 +28,7 @@
 #include "openvswitch/poll-loop.h"
 #include "openvswitch/vlog.h"
 #include "ovsdb-error.h"
+#include "ovsdb-intf.h"
 #include "ovsdb.h"
 #include "row.h"
 #include "storage.h"
@@ -979,12 +980,35 @@ ovsdb_txn_propose_commit(struct ovsdb_txn *txn, bool durable)
 struct ovsdb_error * OVS_WARN_UNUSED_RESULT
 ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
 {
-    struct ovsdb_txn_progress *p = ovsdb_txn_propose_commit(txn, durable);
+    /* TODO change this to call the interface */
+    uint32_t ret_error = 0;
+
+    OVSDB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
+    POVSDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
+
+    ret_error = ovsdb_provider_init(&pOvsdbFnTable);
+    if (ret_error) {
+        VLOG_ERR("Unable to initialize provider: %d", ret_error);
+        return false;
+    }
+    ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext,
+        NULL, NULL, NULL);
+    if (ret_error) {
+        VLOG_ERR("Unable to fetch context: %d", ret_error);
+        ovsdb_provider_shutdown(pOvsdbFnTable);
+        return false;
+    }
+
+    struct ovsdb_txn_progress *p = pOvsdbFnTable->pfn_db_txn_propose_commit(
+        pOvsdbIntfContext, txn, durable);
     for (;;) {
         ovsdb_storage_run(p->storage);
-        if (ovsdb_txn_progress_is_complete(p)) {
+        /* TODO change this to call the interface */
+        if (pOvsdbFnTable->pfn_db_txn_progress_is_complete(pOvsdbIntfContext,
+            p)) {
             struct ovsdb_error *error
                 = ovsdb_error_clone(ovsdb_txn_progress_get_error(p));
+            /* TODO change this to call the interface */
             ovsdb_txn_progress_destroy(p);
 
             if (error) {
@@ -993,6 +1017,8 @@ ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
                 ovsdb_txn_complete(txn);
             }
 
+            pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
+            ovsdb_provider_shutdown(pOvsdbFnTable);
             return error;
         }
         ovsdb_storage_wait(p->storage);

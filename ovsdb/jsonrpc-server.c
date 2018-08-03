@@ -995,12 +995,15 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                                  version, request->id);
         }
     } else if (!strcmp(request->method, "monitor_cond_change")) {
+        /* TODO change this to call the interface */
         reply = ovsdb_jsonrpc_monitor_cond_change(s, request->params,
                                                   request->id);
     } else if (!strcmp(request->method, "monitor_cancel")) {
+        /* TODO change this to call the interface */
         reply = ovsdb_jsonrpc_monitor_cancel(s, json_array(request->params),
                                              request->id);
     } else if (!strcmp(request->method, "get_schema")) {
+        /* TODO change this to call the interface */
         struct ovsdb *db = ovsdb_jsonrpc_lookup_db(s, request, &reply);
         if (!reply) {
             reply = jsonrpc_create_reply(ovsdb_schema_to_json(db->schema),
@@ -1027,14 +1030,19 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                                     UUID_ARGS(uuid)));
         reply = jsonrpc_create_reply(result, request->id);
     } else if (!strcmp(request->method, "lock")) {
+        /* TODO change this to call the interface */
         reply = ovsdb_jsonrpc_session_lock(s, request, OVSDB_LOCK_WAIT);
     } else if (!strcmp(request->method, "steal")) {
+        /* TODO change this to call the interface */
         reply = ovsdb_jsonrpc_session_lock(s, request, OVSDB_LOCK_STEAL);
     } else if (!strcmp(request->method, "unlock")) {
+        /* TODO change this to call the interface */
         reply = ovsdb_jsonrpc_session_unlock(s, request);
     } else if (!strcmp(request->method, "set_db_change_aware")) {
+        /* TODO change this to call the interface */
         reply = ovsdb_jsonrpc_session_set_db_change_aware(s, request);
     } else if (!strcmp(request->method, "echo")) {
+        /* TODO change this to call the interface */
         reply = jsonrpc_create_reply(json_clone(request->params), request->id);
     } else {
         reply = jsonrpc_create_error(json_string_create("unknown method"),
@@ -1383,6 +1391,7 @@ ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
     m = xzalloc(sizeof *m);
     m->session = s;
     m->db = db;
+    /* TODO change this to call the interface */
     m->dbmon = ovsdb_monitor_create(db, m);
     if (version == OVSDB_MONITOR_V2) {
         m->condition = ovsdb_monitor_session_condition_create();

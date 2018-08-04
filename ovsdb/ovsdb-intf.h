@@ -23,7 +23,7 @@ enum ovsdb_lock_mode;
  * could be the database session information for example, or anything that is
  * very specific to the backend and not generic.
  */
-typedef struct _OVSDB_INTERFACE_CONTEXT_T * POVSDB_INTERFACE_CONTEXT_T;
+typedef struct _DB_INTERFACE_CONTEXT_T * PDB_INTERFACE_CONTEXT_T;
 
 /**
  * @brief load the context using the provider specified.
@@ -33,7 +33,7 @@ typedef struct _OVSDB_INTERFACE_CONTEXT_T * POVSDB_INTERFACE_CONTEXT_T;
  * @return 0 for success, non-zero for error
  */
 typedef uint32_t (*PFN_DB_OPEN_CONTEXT) (
-    POVSDB_INTERFACE_CONTEXT_T * ppContext,
+    PDB_INTERFACE_CONTEXT_T * ppContext,
     ...
 );
 
@@ -57,7 +57,7 @@ typedef uint32_t (*PFN_DB_OPEN_CONTEXT) (
  * transaction, and each table has a list of rows involved and so on
  */
 typedef struct ovsdb_txn * (*PFN_DB_EXECUTE_COMPOSE)(
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     const struct json *params,
     const char *role,
     const char *id,
@@ -84,7 +84,7 @@ typedef struct ovsdb_txn * (*PFN_DB_EXECUTE_COMPOSE)(
  * @return ovsdb_txn_progress object to indicate the progress of the transaction
  */
 typedef struct ovsdb_txn_progress * (*PFN_DB_TXN_PROPOSE_COMMIT)(
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_txn *txn,
     bool durable
 );
@@ -96,7 +96,7 @@ typedef struct ovsdb_txn_progress * (*PFN_DB_TXN_PROPOSE_COMMIT)(
  * TODO determine the transaction steps and format of log
  */
 typedef bool (*PFN_DB_TXN_PROGRESS_IS_COMPLETE) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     const struct ovsdb_txn_progress *progress
 );
 
@@ -105,7 +105,7 @@ typedef bool (*PFN_DB_TXN_PROGRESS_IS_COMPLETE) (
  * objects.
  */
 typedef void (*PFN_DB_TXN_PROGRESS_DESTROY) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_txn_progress
 );
 
@@ -119,7 +119,7 @@ typedef void (*PFN_DB_TXN_PROGRESS_DESTROY) (
  * in RFC 7047 for "Monitor"
  */
 typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CREATE)(
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     /*
      * a structure containing ovsdb_session, db_change_aware to enable tracking
      * of changes in the DB, triggers, monitors, and read-only status.
@@ -156,7 +156,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CREATE)(
  * that. The response must match the fields described in RFC 7047
  */
 typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_COND_CHANGE)(
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     /*
      * a structure containing ovsdb_session, db_change_aware to enable tracking
      * of changes in the DB, triggers, monitors, and read-only status.
@@ -179,7 +179,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_COND_CHANGE)(
  * The response must match the fields described in RFC 7047 "monitor_cancel"
  */
 typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CANCEL) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     /*
      * a structure containing ovsdb_session, db_change_aware to enable tracking
      * of changes in the DB, triggers, monitors, and read-only status.
@@ -201,7 +201,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CANCEL) (
  * @brief This request should be responded by the implementing backend
  */
 typedef struct jsonrpc_msg * (*PFN_DB_ECHO) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     /*
      * arguments from the client which should be responded as is by the plugged
      * backend implementation
@@ -219,7 +219,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_ECHO) (
  * TODO it should take no args, the current implementation uses db->schema
  */
 typedef struct json * (*PFN_DB_GET_SCHEMA) (
-    POVSDB_INTERFACE_CONTEXT_T pContext
+    PDB_INTERFACE_CONTEXT_T pContext
 
 );
 
@@ -241,7 +241,7 @@ typedef struct json * (*PFN_DB_GET_SCHEMA) (
  * lock only if this lock had no existing owner.  '*victimp' is set to NULL.
  */
 typedef struct jsonrpc_msg * (*PFN_DB_SESSION_LOCK) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     /*
      * a structure containing ovsdb_session, db_change_aware to enable tracking
      * of changes in the DB, triggers, monitors, and read-only status.
@@ -264,7 +264,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_SESSION_LOCK) (
  * requested for a lock, this cancels it. More details in RFC 7047
  */
 typedef struct jsonrpc_msg * (*PFN_DB_SESSION_UNLOCK) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     /*
      * a structure containing ovsdb_session, db_change_aware to enable tracking
      * of changes in the DB, triggers, monitors, and read-only status.
@@ -281,7 +281,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_SESSION_UNLOCK) (
  * @brief List all the DB names known to the backend storage
  */
 typedef struct jsonrpc_msg * (*PFN_DB_LIST_DBS) (
-    POVSDB_INTERFACE_CONTEXT_T pContext
+    PDB_INTERFACE_CONTEXT_T pContext
     // no args
 );
 
@@ -292,7 +292,7 @@ typedef struct jsonrpc_msg * (*PFN_DB_LIST_DBS) (
  * @param change_aware boolean argument to imply if it is change aware or not
  */
  typedef struct jsonrpc_msg * (*PFN_DB_SET_CHANGE_AWARE) (
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     bool change_aware
     // no args
  );
@@ -301,19 +301,19 @@ typedef struct jsonrpc_msg * (*PFN_DB_LIST_DBS) (
   * @brief DB_CONVERT - for patching/updating the backend storage metadata
   */
 typedef void (*PFN_DB_CONVERT) (
-    POVSDB_INTERFACE_CONTEXT_T pContext
+    PDB_INTERFACE_CONTEXT_T pContext
     // args to be decided
 );
 
 
 typedef uint32_t (*PFN_DB_CLOSE_CONTEXT) (
-    POVSDB_INTERFACE_CONTEXT_T pContext
+    PDB_INTERFACE_CONTEXT_T pContext
 );
 
 /**
  * @brief function table to implement OVSDB Mgmt Protocol's storage
  */
-typedef struct __OVSDB_FUNCTION_TABLE
+typedef struct __DB_FUNCTION_TABLE
 {
     /** @brief to gather the context required by the backend */
     PFN_DB_OPEN_CONTEXT pfn_db_open_context;
@@ -347,13 +347,13 @@ typedef struct __OVSDB_FUNCTION_TABLE
     PFN_DB_CONVERT pfn_db_convert;
     /** @brief to destroy the context required by the backend */
     PFN_DB_CLOSE_CONTEXT pfn_db_close_context;
-} OVSDB_FUNCTION_TABLE;
+} DB_FUNCTION_TABLE;
 
 
 uint32_t
-ovsdb_provider_init(OVSDB_FUNCTION_TABLE **ppOvsdbFnTable);
+db_provider_init(DB_FUNCTION_TABLE **ppOvsdbFnTable);
 
 void
-ovsdb_provider_shutdown(OVSDB_FUNCTION_TABLE *pOvsdbFnTable);
+db_provider_shutdown(DB_FUNCTION_TABLE *pOvsdbFnTable);
 
 #endif /* OVSDB_INTF_H_ */

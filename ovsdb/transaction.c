@@ -983,10 +983,10 @@ ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
     /* TODO change this to call the interface */
     uint32_t ret_error = 0;
 
-    OVSDB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
-    POVSDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
+    DB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
 
-    ret_error = ovsdb_provider_init(&pOvsdbFnTable);
+    ret_error = db_provider_init(&pOvsdbFnTable);
     if (ret_error) {
         VLOG_ERR("Unable to initialize provider: %d", ret_error);
         return false;
@@ -995,7 +995,7 @@ ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
         NULL, NULL, NULL);
     if (ret_error) {
         VLOG_ERR("Unable to fetch context: %d", ret_error);
-        ovsdb_provider_shutdown(pOvsdbFnTable);
+        db_provider_shutdown(pOvsdbFnTable);
         return false;
     }
 
@@ -1018,7 +1018,7 @@ ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
             }
 
             pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-            ovsdb_provider_shutdown(pOvsdbFnTable);
+            db_provider_shutdown(pOvsdbFnTable);
             return error;
         }
         ovsdb_storage_wait(p->storage);

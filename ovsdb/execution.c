@@ -240,12 +240,12 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     bool durable;
     struct json *results;
     /* TODO change this to call the interface */
-    OVSDB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
-    POVSDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
+    DB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
     uint32_t ret_error;
     struct ovsdb_error *json_error;
 
-    ret_error = ovsdb_provider_init(&pOvsdbFnTable);
+    ret_error = db_provider_init(&pOvsdbFnTable);
     if (ret_error) {
         json_error = ovsdb_syntax_error(params, NULL,
             "Unable to initialize provider");
@@ -254,7 +254,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
     ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext, db, session,
         read_only);
     if (ret_error) {
-        ovsdb_provider_shutdown(pOvsdbFnTable);
+        db_provider_shutdown(pOvsdbFnTable);
         json_error = ovsdb_syntax_error(params, NULL,
             "Unable to fetch context");
         return ovsdb_error_to_json_free(json_error);
@@ -265,7 +265,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
         &durable, &results);
     if (!txn) {
         pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-        ovsdb_provider_shutdown(pOvsdbFnTable);
+        db_provider_shutdown(pOvsdbFnTable);
         return results;
     }
 
@@ -275,7 +275,7 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
         ovsdb_error_destroy(error);
     }
     pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-    ovsdb_provider_shutdown(pOvsdbFnTable);
+    db_provider_shutdown(pOvsdbFnTable);
     return results;
 }
 

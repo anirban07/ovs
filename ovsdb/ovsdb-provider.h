@@ -11,10 +11,7 @@
 #include "transaction.h"
 #include "util.h"
 
-struct ovsdb;
-struct ovsdb_session;
-
-typedef struct _OVSDB_INTERFACE_CONTEXT_T {
+typedef struct _DB_INTERFACE_CONTEXT_T {
     /**
      * @brief the OVSDB implementation of the database that contains the tables,
      * rows, data of the storage.
@@ -28,17 +25,17 @@ typedef struct _OVSDB_INTERFACE_CONTEXT_T {
     struct ovsdb_session *session;
     /** @brief if the state of the database is read only */
     bool read_only;
-} OVSDB_INTERFACE_CONTEXT_T;
+} DB_INTERFACE_CONTEXT_T;
 
 uint32_t
-ovsdb_open_context(OVSDB_INTERFACE_CONTEXT_T **ppContext, ...);
+ovsdb_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...);
 
 uint32_t
-ovsdb_close_context(OVSDB_INTERFACE_CONTEXT_T *pContext);
+ovsdb_close_context(DB_INTERFACE_CONTEXT_T *pContext);
 
 struct ovsdb_txn *
 ovsdb_execute_compose_intf(
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     const struct json *params,
     const char *role,
     const char *id,
@@ -50,12 +47,12 @@ ovsdb_execute_compose_intf(
 
 struct ovsdb_txn_progress *
 ovsdb_txn_propose_commit_intf(
-    POVSDB_INTERFACE_CONTEXT_T pContext,
+    PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_txn *txn,
     bool durable
 );
 
-bool ovsdb_txn_progress_is_complete_intf(POVSDB_INTERFACE_CONTEXT_T pContext,
+bool ovsdb_txn_progress_is_complete_intf(PDB_INTERFACE_CONTEXT_T pContext,
     const struct ovsdb_txn_progress *p);
 
 #endif /* OVSDB_PROVIDER_H */

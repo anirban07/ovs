@@ -3,6 +3,7 @@ lib_LTLIBRARIES += ovsdb/libovsdb.la
 ovsdb_libovsdb_la_LDFLAGS = \
         $(OVS_LTINFO) \
         -Wl,--version-script=$(top_builddir)/ovsdb/libovsdb.sym \
+		-lldap -llber \
         $(AM_LDFLAGS)
 ovsdb_libovsdb_la_SOURCES = \
 	ovsdb/column.c \
@@ -20,8 +21,8 @@ ovsdb_libovsdb_la_SOURCES = \
 	ovsdb/mutation.h \
 	ovsdb/ovsdb.c \
 	ovsdb/ovsdb-intf.h \
-	ovsdb/ovsdb-provider.h \
-	ovsdb/ovsdb-provider.c \
+	ovsdb/ldap-provider.c \
+	ovsdb/ldap-provider.h \
 	ovsdb/ovsdb.h \
 	ovsdb/monitor.c \
 	ovsdb/monitor.h \

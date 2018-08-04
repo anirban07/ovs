@@ -3,10 +3,10 @@
 #include "ovsdb-provider.h"
 
 uint32_t
-ovsdb_open_context(OVSDB_INTERFACE_CONTEXT_T **ppContext, ...)
+ovsdb_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...)
 {
     va_list argList = { 0 };
-    OVSDB_INTERFACE_CONTEXT_T *pContext = NULL;
+    DB_INTERFACE_CONTEXT_T *pContext = NULL;
 
     pContext = xzalloc(sizeof *pContext);
 
@@ -22,7 +22,7 @@ ovsdb_open_context(OVSDB_INTERFACE_CONTEXT_T **ppContext, ...)
 }
 
 uint32_t
-ovsdb_close_context(OVSDB_INTERFACE_CONTEXT_T *pContext)
+ovsdb_close_context(DB_INTERFACE_CONTEXT_T *pContext)
 {
     if (pContext) {
         free(pContext);
@@ -31,9 +31,9 @@ ovsdb_close_context(OVSDB_INTERFACE_CONTEXT_T *pContext)
 }
 
 uint32_t
-ovsdb_provider_init(OVSDB_FUNCTION_TABLE **ppOvsdbFnTable)
+db_provider_init(DB_FUNCTION_TABLE **ppOvsdbFnTable)
 {
-    OVSDB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
+    DB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
 
     pOvsdbFnTable = xzalloc(sizeof *pOvsdbFnTable);
 
@@ -50,7 +50,7 @@ ovsdb_provider_init(OVSDB_FUNCTION_TABLE **ppOvsdbFnTable)
 }
 
 void
-ovsdb_provider_shutdown(OVSDB_FUNCTION_TABLE *pOvsdbFnTable)
+db_provider_shutdown(DB_FUNCTION_TABLE *pOvsdbFnTable)
 {
     if (pOvsdbFnTable) {
         free(pOvsdbFnTable);
@@ -58,7 +58,7 @@ ovsdb_provider_shutdown(OVSDB_FUNCTION_TABLE *pOvsdbFnTable)
 }
 
 struct ovsdb_txn * ovsdb_execute_compose_intf(
-    POVSDB_INTERFACE_CONTEXT_T pContext, const struct json *params,
+    PDB_INTERFACE_CONTEXT_T pContext, const struct json *params,
     const char *role, const char *id, long long int elapsed_msec,
     long long int *timeout_msec, bool *durable, struct json **resultsp)
 {
@@ -69,14 +69,14 @@ struct ovsdb_txn * ovsdb_execute_compose_intf(
 }
 
 struct ovsdb_txn_progress *ovsdb_txn_propose_commit_intf(
-    POVSDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED, struct ovsdb_txn *txn,
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED, struct ovsdb_txn *txn,
     bool durable)
 {
     return ovsdb_txn_propose_commit(txn, durable);
 }
 
 bool ovsdb_txn_progress_is_complete_intf(
-    POVSDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     const struct ovsdb_txn_progress *p)
 {
     return ovsdb_txn_progress_is_complete(p);

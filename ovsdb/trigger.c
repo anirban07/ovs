@@ -193,10 +193,10 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
     /* Handle "initialized" state. */
 
     uint32_t ret_error = 0;
-    OVSDB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
-    POVSDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
+    DB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
 
-    ret_error = ovsdb_provider_init(&pOvsdbFnTable);
+    ret_error = db_provider_init(&pOvsdbFnTable);
     if (ret_error) {
         VLOG_ERR("Unable to initialize provider: %d", ret_error);
         return false;
@@ -205,7 +205,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
         t->db, t->session, t->read_only);
     if (ret_error) {
         VLOG_ERR("Unable to fetch context: %d", ret_error);
-        ovsdb_provider_shutdown(pOvsdbFnTable);
+        db_provider_shutdown(pOvsdbFnTable);
         return false;
     }
     if (!t->reply) {
@@ -231,7 +231,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
                      * later. */
                 }
                 pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-                ovsdb_provider_shutdown(pOvsdbFnTable);
+                db_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -250,7 +250,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
                         "(only the root role may convert databases)",
                         t->id, t->role, t->db->schema->name));
                 pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-                ovsdb_provider_shutdown(pOvsdbFnTable);
+                db_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -260,7 +260,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
                 trigger_convert_error(t, ovsdb_syntax_error(params, NULL,
                                                             "array expected"));
                 pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-                ovsdb_provider_shutdown(pOvsdbFnTable);
+                db_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -282,7 +282,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
                 ovsdb_schema_destroy(new_schema);
                 trigger_convert_error(t, error);
                 pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-                ovsdb_provider_shutdown(pOvsdbFnTable);
+                db_provider_shutdown(pOvsdbFnTable);
                 return false;
             }
 
@@ -318,11 +318,11 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
             if (newdb) {
                 ovsdb_replace(t->db, newdb);
                 pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-                ovsdb_provider_shutdown(pOvsdbFnTable);
+                db_provider_shutdown(pOvsdbFnTable);
                 return true;
             }
             pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-            ovsdb_provider_shutdown(pOvsdbFnTable);
+            db_provider_shutdown(pOvsdbFnTable);
             return false;
         }
         ovsdb_destroy(newdb);
@@ -341,7 +341,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
         if (!pOvsdbFnTable->pfn_db_txn_progress_is_complete(pOvsdbIntfContext,
             t->progress)) {
             pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-            ovsdb_provider_shutdown(pOvsdbFnTable);
+            db_provider_shutdown(pOvsdbFnTable);
             return false;
         }
 
@@ -379,7 +379,7 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
         }
 
         pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-        ovsdb_provider_shutdown(pOvsdbFnTable);
+        db_provider_shutdown(pOvsdbFnTable);
         return false;
     }
 

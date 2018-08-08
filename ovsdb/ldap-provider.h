@@ -15,6 +15,8 @@
 #include "transaction.h"
 #include "util.h"
 #include "openvswitch/vlog.h"
+#include "jsonrpc-server.h"
+#include "monitor.h"
 
 #define OVS_SAFE_FREE_STRING(pStr) \
         if ((pStr)) { \
@@ -63,8 +65,8 @@ typedef struct _ovs_sasl_creds_t {
 
 typedef struct _DB_INTERFACE_CONTEXT_T {
     ovs_ldap_context_t *ldap_conn;
-    ovs_sasl_creds_t *sasl_creds;    
-    
+    ovs_sasl_creds_t *sasl_creds;
+
     /**
      * @brief the OVSDB implementation of the database that contains the tables,
      * rows, data of the storage.
@@ -78,6 +80,8 @@ typedef struct _DB_INTERFACE_CONTEXT_T {
     struct ovsdb_session *session;
     /** @brief if the state of the database is read only */
     bool read_only;
+    /** @brief session maintained by the JSONRPC server */
+    struct ovsdb_jsonrpc_session *jsonrpc_session;
 } DB_INTERFACE_CONTEXT_T;
 
 void
@@ -197,5 +201,18 @@ ldap_txn_propose_commit_intf(
 
 bool ldap_txn_progress_is_complete_intf(PDB_INTERFACE_CONTEXT_T pContext,
     const struct ovsdb_txn_progress *p);
+
+
+struct jsonrpc_msg *
+ldap_monitor_create_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json *params, enum ovsdb_monitor_version version, struct json *id);
+
+struct jsonrpc_msg *
+ldap_monitor_cond_change_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json *params, struct json *id);
+
+struct jsonrpc_msg *
+ldap_monitor_cancel_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json_array *params, struct json *id);
 
 #endif /* LDAP_PROVIDER_H */

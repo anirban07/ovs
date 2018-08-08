@@ -120,24 +120,11 @@ typedef void (*PFN_DB_TXN_PROGRESS_DESTROY) (
  */
 typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CREATE)(
     PDB_INTERFACE_CONTEXT_T pContext,
-    /*
-     * a structure containing ovsdb_session, db_change_aware to enable tracking
-     * of changes in the DB, triggers, monitors, and read-only status.
-     */
-    struct ovsdb_jsonrpc_session *session,
-
-    /*
-     * The OVSDB structure that stores the information as tables, colums, rows,
-     * and data.
-     * TODO this DB is used by OVSDB directly. In the next step it would
-     * involve changing the usage of DB elsewhere as well.
-     */
-    struct ovsdb *db,
 
     /*
      * JSON object of the parameters passed by the wire protocol (RFC 7047).
      */
-    const struct json *params,
+    struct json *params,
 
     /*
      * version number of the OVSDB monitor (OVSDB_MONITOR_V1 or
@@ -157,16 +144,11 @@ typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CREATE)(
  */
 typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_COND_CHANGE)(
     PDB_INTERFACE_CONTEXT_T pContext,
-    /*
-     * a structure containing ovsdb_session, db_change_aware to enable tracking
-     * of changes in the DB, triggers, monitors, and read-only status.
-     */
-    struct ovsdb_jsonrpc_session *session,
 
     /*
      * JSON object of the parameters passed by the wire protocol (RFC 7047).
      */
-    const struct json *params,
+    struct json *params,
 
     /*
      * JSON object to track the request ID
@@ -180,11 +162,6 @@ typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_COND_CHANGE)(
  */
 typedef struct jsonrpc_msg * (*PFN_DB_MONITOR_CANCEL) (
     PDB_INTERFACE_CONTEXT_T pContext,
-    /*
-     * a structure containing ovsdb_session, db_change_aware to enable tracking
-     * of changes in the DB, triggers, monitors, and read-only status.
-     */
-    struct ovsdb_jsonrpc_session *session,
 
     /*
      * JSON object of the parameters passed by the wire protocol (RFC 7047).

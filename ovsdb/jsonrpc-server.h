@@ -23,6 +23,10 @@ struct ovsdb;
 struct shash;
 struct simap;
 struct uuid;
+enum ovsdb_monitor_version;
+struct json;
+struct ovsdb_jsonrpc_session;
+struct json_array;
 
 struct ovsdb_jsonrpc_server *ovsdb_jsonrpc_server_create(bool read_only);
 bool ovsdb_jsonrpc_server_add_db(struct ovsdb_jsonrpc_server *,
@@ -83,5 +87,19 @@ struct ovsdb_jsonrpc_monitor;
 void ovsdb_jsonrpc_monitor_destroy(struct ovsdb_jsonrpc_monitor *,
                                    bool notify_cancellation);
 void ovsdb_jsonrpc_disable_monitor_cond(void);
+
+struct jsonrpc_msg *ovsdb_jsonrpc_monitor_create(
+    struct ovsdb_jsonrpc_session *, struct ovsdb *, struct json *params,
+    enum ovsdb_monitor_version, const struct json *request_id);
+
+struct jsonrpc_msg *ovsdb_jsonrpc_monitor_cond_change(
+    struct ovsdb_jsonrpc_session *s,
+    struct json *params,
+    const struct json *request_id);
+
+struct jsonrpc_msg *ovsdb_jsonrpc_monitor_cancel(
+    struct ovsdb_jsonrpc_session *,
+    struct json_array *params,
+    const struct json *request_id);
 
 #endif /* ovsdb/jsonrpc-server.h */

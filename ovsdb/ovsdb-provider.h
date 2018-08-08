@@ -10,6 +10,8 @@
 #include "openvswitch/json.h"
 #include "transaction.h"
 #include "util.h"
+#include "jsonrpc-server.h"
+#include "monitor.h"
 
 typedef struct _DB_INTERFACE_CONTEXT_T {
     /**
@@ -25,6 +27,8 @@ typedef struct _DB_INTERFACE_CONTEXT_T {
     struct ovsdb_session *session;
     /** @brief if the state of the database is read only */
     bool read_only;
+    /** @brief session maintained by the JSONRPC server */
+    struct ovsdb_jsonrpc_session *jsonrpc_session;
 } DB_INTERFACE_CONTEXT_T;
 
 uint32_t
@@ -52,7 +56,20 @@ ovsdb_txn_propose_commit_intf(
     bool durable
 );
 
-bool ovsdb_txn_progress_is_complete_intf(PDB_INTERFACE_CONTEXT_T pContext,
+bool
+ovsdb_txn_progress_is_complete_intf(PDB_INTERFACE_CONTEXT_T pContext,
     const struct ovsdb_txn_progress *p);
+
+struct jsonrpc_msg *
+ovsdb_monitor_create_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json *params, enum ovsdb_monitor_version version, struct json *id);
+
+struct jsonrpc_msg *
+ovsdb_monitor_cond_change_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json *params, struct json *id);
+
+struct jsonrpc_msg *
+ovsdb_monitor_cancel_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json_array *params, struct json *id);
 
 #endif /* OVSDB_PROVIDER_H */

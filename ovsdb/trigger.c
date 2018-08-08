@@ -202,9 +202,9 @@ ovsdb_trigger_try(struct ovsdb_trigger *t, long long int now)
         return false;
     }
     ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext,
-        t->db, t->session, t->read_only);
+        t->db, t->session, t->read_only, NULL);
     if (ret_error) {
-        VLOG_ERR("Unable to fetch context: %d", ret_error);
+        VLOG_ERR("Unable to fetch context in trigger: %d", ret_error);
         db_provider_shutdown(pOvsdbFnTable);
         return false;
     }

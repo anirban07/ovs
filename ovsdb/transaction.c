@@ -992,9 +992,9 @@ ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
         return false;
     }
     ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext,
-        NULL, NULL, NULL);
+        NULL, NULL, false, NULL);
     if (ret_error) {
-        VLOG_ERR("Unable to fetch context: %d", ret_error);
+        VLOG_ERR("Unable to fetch context here: %d", ret_error);
         db_provider_shutdown(pOvsdbFnTable);
         return false;
     }

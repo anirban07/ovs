@@ -374,7 +374,7 @@ error:
 }
 
 uint32_t
-ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...) 
+ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...)
 {
     uint32_t err = 0;
     va_list argList = { 0 };
@@ -386,6 +386,7 @@ ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...)
     pContext->db = va_arg(argList, struct ovsdb *);
     pContext->session = va_arg(argList, struct ovsdb_session *);
     pContext->read_only = va_arg(argList, int);
+    pContext->jsonrpc_session = va_arg(argList, struct ovsdb_jsonrpc_session *);
     va_end(argList);
     err = OvsCreateConnection(
         LDAP_SERVER,
@@ -407,7 +408,7 @@ error:
 }
 
 uint32_t
-ldap_close_context(DB_INTERFACE_CONTEXT_T *pContext) 
+ldap_close_context(DB_INTERFACE_CONTEXT_T *pContext)
 {
     if (pContext) {
         OvsFreeConnection(pContext->ldap_conn);
@@ -429,6 +430,9 @@ db_provider_init(DB_FUNCTION_TABLE **ppLdapFnTable)
     pLdapFnTable->pfn_db_txn_propose_commit = &ldap_txn_propose_commit_intf;
     pLdapFnTable->pfn_db_txn_progress_is_complete =
         &ldap_txn_progress_is_complete_intf;
+    pLdapFnTable->pfn_db_monitor_create = &ldap_monitor_create_intf;
+    pLdapFnTable->pfn_db_monitor_cond_change = &ldap_monitor_cond_change_intf;
+    pLdapFnTable->pfn_db_monitor_cancel = &ldap_monitor_cancel_intf;
 
     *ppLdapFnTable = pLdapFnTable;
 
@@ -455,7 +459,7 @@ ldap_execute_compose_intf(
     long long int *timeout_msec,
     bool *durable,
     struct json **resultsp
-) 
+)
 {
     return ovsdb_execute_compose(
         pContext->db, pContext->session, params, pContext->read_only, role, id,
@@ -468,7 +472,7 @@ ldap_txn_propose_commit_intf(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_txn *txn,
     bool durable
-) 
+)
 {
     return ovsdb_txn_propose_commit(txn, durable);
 }
@@ -476,8 +480,32 @@ ldap_txn_propose_commit_intf(
 bool ldap_txn_progress_is_complete_intf(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     const struct ovsdb_txn_progress *p
-) 
+)
 {
     return ovsdb_txn_progress_is_complete(p);
 }
 
+struct jsonrpc_msg *
+ldap_monitor_create_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json *params, enum ovsdb_monitor_version version, struct json *id)
+{
+    struct ovsdb_jsonrpc_session *s = pContext->jsonrpc_session;
+    struct ovsdb *db = pContext->db;
+
+    return ovsdb_jsonrpc_monitor_create(s, db, params, version, id);
+}
+
+struct jsonrpc_msg *
+ldap_monitor_cond_change_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json *params, struct json *id)
+{
+    return ovsdb_jsonrpc_monitor_cond_change(pContext->jsonrpc_session, params,
+                                             id);
+}
+
+struct jsonrpc_msg *
+ldap_monitor_cancel_intf(PDB_INTERFACE_CONTEXT_T pContext,
+    struct json_array *params, struct json *id)
+{
+    return ovsdb_jsonrpc_monitor_cancel(pContext->jsonrpc_session, params, id);
+}

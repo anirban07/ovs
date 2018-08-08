@@ -251,8 +251,8 @@ ovsdb_execute(struct ovsdb *db, const struct ovsdb_session *session,
             "Unable to initialize provider");
         return ovsdb_error_to_json_free(json_error);
     }
-    ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext, db, session,
-        read_only);
+    ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext, db,
+                                                   session, read_only, NULL);
     if (ret_error) {
         db_provider_shutdown(pOvsdbFnTable);
         json_error = ovsdb_syntax_error(params, NULL,

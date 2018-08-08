@@ -28,6 +28,7 @@
 #include "ovsdb-error.h"
 #include "ovsdb-parser.h"
 #include "ovsdb.h"
+#include "ovsdb-intf.h"
 #include "condition.h"
 #include "openvswitch/poll-loop.h"
 #include "reconnect.h"
@@ -95,17 +96,6 @@ static void ovsdb_jsonrpc_trigger_complete_done(
     struct ovsdb_jsonrpc_session *);
 
 /* Monitors. */
-static struct jsonrpc_msg *ovsdb_jsonrpc_monitor_create(
-    struct ovsdb_jsonrpc_session *, struct ovsdb *, struct json *params,
-    enum ovsdb_monitor_version, const struct json *request_id);
-static struct jsonrpc_msg *ovsdb_jsonrpc_monitor_cond_change(
-    struct ovsdb_jsonrpc_session *s,
-    struct json *params,
-    const struct json *request_id);
-static struct jsonrpc_msg *ovsdb_jsonrpc_monitor_cancel(
-    struct ovsdb_jsonrpc_session *,
-    struct json_array *params,
-    const struct json *request_id);
 static void ovsdb_jsonrpc_monitor_preremove_db(struct ovsdb_jsonrpc_session *,
                                                struct ovsdb *);
 static void ovsdb_jsonrpc_monitor_remove_all(struct ovsdb_jsonrpc_session *);
@@ -976,6 +966,14 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
                                   struct jsonrpc_msg *request)
 {
     struct jsonrpc_msg *reply;
+    DB_FUNCTION_TABLE *pDbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pDbIntfContext = NULL;
+    uint32_t ret_error;
+
+    ret_error = db_provider_init(&pDbFnTable);
+    if (ret_error) {
+        return;
+    }
 
     if (!strcmp(request->method, "transact") ||
         !strcmp(request->method, "convert")) {
@@ -991,17 +989,31 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
             int l = strlen(request->method) - strlen("monitor");
             enum ovsdb_monitor_version version = l ? OVSDB_MONITOR_V2
                                                    : OVSDB_MONITOR_V1;
-            reply = ovsdb_jsonrpc_monitor_create(s, db, request->params,
-                                                 version, request->id);
+            ret_error = pDbFnTable->pfn_db_open_context(&pDbIntfContext, db,
+                                                        NULL, false, s);
+            if (!ret_error) {
+                reply = pDbFnTable->pfn_db_monitor_create(pDbIntfContext,
+                                                          request->params,
+                                                          version, request->id);
+            }
         }
     } else if (!strcmp(request->method, "monitor_cond_change")) {
         /* TODO change this to call the interface */
-        reply = ovsdb_jsonrpc_monitor_cond_change(s, request->params,
-                                                  request->id);
+        ret_error = pDbFnTable->pfn_db_open_context(&pDbIntfContext, NULL,
+                                                    NULL, false, s);
+        if (!ret_error) {
+            reply = pDbFnTable->pfn_db_monitor_cond_change(pDbIntfContext,
+                                                           request->params,
+                                                           request->id);
+        }
     } else if (!strcmp(request->method, "monitor_cancel")) {
         /* TODO change this to call the interface */
-        reply = ovsdb_jsonrpc_monitor_cancel(s, json_array(request->params),
-                                             request->id);
+        ret_error = pDbFnTable->pfn_db_open_context(&pDbIntfContext, NULL, NULL,
+                                                    false, s);
+        if (!ret_error) {
+            reply = pDbFnTable->pfn_db_monitor_cancel(pDbIntfContext,
+                json_array(request->params), request->id);
+        }
     } else if (!strcmp(request->method, "get_schema")) {
         /* TODO change this to call the interface */
         struct ovsdb *db = ovsdb_jsonrpc_lookup_db(s, request, &reply);
@@ -1048,6 +1060,9 @@ ovsdb_jsonrpc_session_got_request(struct ovsdb_jsonrpc_session *s,
         reply = jsonrpc_create_error(json_string_create("unknown method"),
                                      request->id);
     }
+
+    pDbFnTable->pfn_db_close_context(pDbIntfContext);
+    db_provider_shutdown(pDbFnTable);
 
     if (reply) {
         jsonrpc_msg_destroy(request);
@@ -1358,7 +1373,7 @@ ovsdb_jsonrpc_parse_monitor_request(
     return NULL;
 }
 
-static struct jsonrpc_msg *
+struct jsonrpc_msg *
 ovsdb_jsonrpc_monitor_create(struct ovsdb_jsonrpc_session *s, struct ovsdb *db,
                              struct json *params,
                              enum ovsdb_monitor_version version,
@@ -1497,7 +1512,7 @@ ovsdb_jsonrpc_parse_monitor_cond_change_request(
     return error;
 }
 
-static struct jsonrpc_msg *
+struct jsonrpc_msg *
 ovsdb_jsonrpc_monitor_cond_change(struct ovsdb_jsonrpc_session *s,
                                   struct json *params,
                                   const struct json *request_id)
@@ -1601,7 +1616,7 @@ error:
     return jsonrpc_create_error(ovsdb_error_to_json_free(error), request_id);
 }
 
-static struct jsonrpc_msg *
+struct jsonrpc_msg *
 ovsdb_jsonrpc_monitor_cancel(struct ovsdb_jsonrpc_session *s,
                              struct json_array *params,
                              const struct json *request_id)

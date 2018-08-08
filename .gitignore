@@ -77,3 +77,5 @@ testsuite.tmp.orig
 /Documentation/_build
 /.venv
 /cxx-check
+.hmake
+build/

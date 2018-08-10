@@ -258,7 +258,7 @@ stop_daemon () {
                 case $action in
                     EXIT)
                         action "Exiting $1 ($pid)" \
-                            ${bindir}/ovs-appctl -T 1 -t $rundir/$1.$pid.ctl exit
+                            ${bindir}/ovs-appctl -T 1 -t $rundir/$1.$pid.ctl exit $2
                         ;;
                     TERM)
                         action "Killing $1 ($pid)" kill $pid
@@ -389,7 +389,10 @@ move_ip_routes () {
 
 ovsdb_tool () {
     if [ "$OVS_USER" != "" ]; then
-        runuser --user "${OVS_USER%:*}" -- ovsdb-tool -vconsole:off "$@"
+        local uid=$(id -u "${OVS_USER%:*}")
+        local gid=$(id -g "${OVS_USER%:*}")
+        local groups=$(id -G "${OVS_USER%:*}" | tr ' ' ',')
+        setpriv --reuid "$uid" --regid "$gid" --groups "$groups" ovsdb-tool -vconsole:off "$@"
     else
         ovsdb-tool -vconsole:off "$@"
     fi
@@ -605,7 +608,9 @@ force_reload_kmod () {
     stop_ovsdb
     start_ovsdb || return 1
 
-    action "Flush old conntrack entries" ovs-appctl dpctl/flush-conntrack
+    if [ -n "$(ovs-dpctl show)" ]; then
+        action "Flush old conntrack entries" ovs-appctl dpctl/flush-conntrack
+    fi
     stop_forwarding
 
     if action "Saving interface configuration" save_interfaces; then

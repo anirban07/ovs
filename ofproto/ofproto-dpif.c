@@ -1520,6 +1520,7 @@ add_internal_flows(struct ofproto_dpif *ofproto)
     controller->max_len = UINT16_MAX;
     controller->controller_id = 0;
     controller->reason = OFPR_IMPLICIT_MISS;
+    controller->meter_id = NX_CTLR_NO_METER;
     ofpact_finish_CONTROLLER(&ofpacts, &controller);
 
     error = add_internal_miss_flow(ofproto, id++, &ofpacts,
@@ -5813,7 +5814,8 @@ ofproto_unixctl_init(void)
                              NULL);
     unixctl_command_register("dpif/show-dp-features", "bridge", 1, 1,
                              ofproto_unixctl_dpif_show_dp_features, NULL);
-    unixctl_command_register("dpif/dump-flows", "[-m] [--names | --no-nmaes] bridge", 1, INT_MAX,
+    unixctl_command_register("dpif/dump-flows",
+                             "[-m] [--names | --no-names] bridge", 1, INT_MAX,
                              ofproto_unixctl_dpif_dump_flows, NULL);
     unixctl_command_register("dpif/set-dp-features", "bridge", 1, 3 ,
                              ofproto_unixctl_dpif_set_dp_features, NULL);

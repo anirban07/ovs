@@ -1065,14 +1065,6 @@ dpdk_eth_dev_init(struct netdev_dpdk *dev)
 
     mbp_priv = rte_mempool_get_priv(dev->dpdk_mp->mp);
     dev->buf_size = mbp_priv->mbuf_data_room_size - RTE_PKTMBUF_HEADROOM;
-
-    /* Get the Flow control configuration for DPDK-ETH */
-    diag = rte_eth_dev_flow_ctrl_get(dev->port_id, &dev->fc_conf);
-    if (diag) {
-        VLOG_DBG("cannot get flow control parameters on port "DPDK_PORT_ID_FMT
-                 ", err=%d", dev->port_id, diag);
-    }
-
     return 0;
 }
 
@@ -1776,6 +1768,12 @@ netdev_dpdk_set_config(struct netdev *netdev, const struct smap *args,
     if (dev->fc_conf.mode != fc_mode || autoneg != dev->fc_conf.autoneg) {
         dev->fc_conf.mode = fc_mode;
         dev->fc_conf.autoneg = autoneg;
+        /* Get the Flow control configuration for DPDK-ETH */
+        err = rte_eth_dev_flow_ctrl_get(dev->port_id, &dev->fc_conf);
+        if (err) {
+            VLOG_WARN("Cannot get flow control parameters on port "
+                DPDK_PORT_ID_FMT", err=%d", dev->port_id, err);
+        }
         dpdk_eth_flow_ctrl_setup(dev);
     }
 
@@ -3043,7 +3041,7 @@ netdev_dpdk_get_status(const struct netdev *netdev, struct smap *args)
                                                dev_info.driver_name);
 
     if (dev_info.pci_dev) {
-        smap_add_format(args, "pci-vendor_id", "0x%u",
+        smap_add_format(args, "pci-vendor_id", "0x%x",
                         dev_info.pci_dev->id.vendor_id);
         smap_add_format(args, "pci-device_id", "0x%x",
                         dev_info.pci_dev->id.device_id);
@@ -4079,12 +4077,8 @@ dump_flow_pattern(struct rte_flow_item *item)
         if (eth_spec) {
             VLOG_DBG("  Spec: src="ETH_ADDR_FMT", dst="ETH_ADDR_FMT", "
                      "type=0x%04" PRIx16"\n",
-                     eth_spec->src.addr_bytes[0], eth_spec->src.addr_bytes[1],
-                     eth_spec->src.addr_bytes[2], eth_spec->src.addr_bytes[3],
-                     eth_spec->src.addr_bytes[4], eth_spec->src.addr_bytes[5],
-                     eth_spec->dst.addr_bytes[0], eth_spec->dst.addr_bytes[1],
-                     eth_spec->dst.addr_bytes[2], eth_spec->dst.addr_bytes[3],
-                     eth_spec->dst.addr_bytes[4], eth_spec->dst.addr_bytes[5],
+                     ETH_ADDR_BYTES_ARGS(eth_spec->src.addr_bytes),
+                     ETH_ADDR_BYTES_ARGS(eth_spec->dst.addr_bytes),
                      ntohs(eth_spec->type));
         } else {
             VLOG_DBG("  Spec = null\n");
@@ -4092,12 +4086,8 @@ dump_flow_pattern(struct rte_flow_item *item)
         if (eth_mask) {
             VLOG_DBG("  Mask: src="ETH_ADDR_FMT", dst="ETH_ADDR_FMT", "
                      "type=0x%04"PRIx16"\n",
-                     eth_mask->src.addr_bytes[0], eth_mask->src.addr_bytes[1],
-                     eth_mask->src.addr_bytes[2], eth_mask->src.addr_bytes[3],
-                     eth_mask->src.addr_bytes[4], eth_mask->src.addr_bytes[5],
-                     eth_mask->dst.addr_bytes[0], eth_mask->dst.addr_bytes[1],
-                     eth_mask->dst.addr_bytes[2], eth_mask->dst.addr_bytes[3],
-                     eth_mask->dst.addr_bytes[4], eth_mask->dst.addr_bytes[5],
+                     ETH_ADDR_BYTES_ARGS(eth_mask->src.addr_bytes),
+                     ETH_ADDR_BYTES_ARGS(eth_mask->dst.addr_bytes),
                      eth_mask->type);
         } else {
             VLOG_DBG("  Mask = null\n");
@@ -4202,8 +4192,8 @@ dump_flow_pattern(struct rte_flow_item *item)
         VLOG_DBG("rte flow icmp pattern:\n");
         if (icmp_spec) {
             VLOG_DBG("  Spec: icmp_type=%"PRIu8", icmp_code=%"PRIu8"\n",
-                     ntohs(icmp_spec->hdr.icmp_type),
-                     ntohs(icmp_spec->hdr.icmp_code));
+                     icmp_spec->hdr.icmp_type,
+                     icmp_spec->hdr.icmp_code);
         } else {
             VLOG_DBG("  Spec = null\n");
         }
@@ -4384,7 +4374,7 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
     struct rte_flow_item_ipv4 ipv4_mask;
     memset(&ipv4_spec, 0, sizeof(ipv4_spec));
     memset(&ipv4_mask, 0, sizeof(ipv4_mask));
-    if (match->flow.dl_type == ntohs(ETH_TYPE_IP)) {
+    if (match->flow.dl_type == htons(ETH_TYPE_IP)) {
 
         ipv4_spec.hdr.type_of_service = match->flow.nw_tos;
         ipv4_spec.hdr.time_to_live    = match->flow.nw_ttl;
@@ -4419,8 +4409,8 @@ netdev_dpdk_add_rte_flow_offload(struct netdev *netdev,
         goto out;
     }
 
-    if ((match->wc.masks.tp_src && match->wc.masks.tp_src != 0xffff) ||
-        (match->wc.masks.tp_dst && match->wc.masks.tp_dst != 0xffff)) {
+    if ((match->wc.masks.tp_src && match->wc.masks.tp_src != OVS_BE16_MAX) ||
+        (match->wc.masks.tp_dst && match->wc.masks.tp_dst != OVS_BE16_MAX)) {
         ret = -1;
         goto out;
     }

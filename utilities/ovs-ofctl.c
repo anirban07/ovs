@@ -1543,7 +1543,7 @@ compare_flows(const void *afs_, const void *bfs_)
         }
     }
 
-    return 0;
+    return a < b ? -1 : 1;
 }
 
 static void
@@ -1565,7 +1565,9 @@ ofctl_dump_flows(struct ovs_cmdl_context *ctx)
         run(vconn_dump_flows(vconn, &fsr, protocol, &fses, &n_fses),
             "dump flows");
 
-        qsort(fses, n_fses, sizeof *fses, compare_flows);
+        if (n_criteria) {
+            qsort(fses, n_fses, sizeof *fses, compare_flows);
+        }
 
         struct ds s = DS_EMPTY_INITIALIZER;
         for (size_t i = 0; i < n_fses; i++) {
@@ -2781,7 +2783,8 @@ ofctl_ofp_parse_pcap(struct ovs_cmdl_context *ctx)
 
                     oh = dp_packet_data(payload);
                     length = ntohs(oh->length);
-                    if (dp_packet_size(payload) < length) {
+                    if (dp_packet_size(payload) < length
+                        || length < sizeof *oh) {
                         break;
                     }
 
@@ -4248,15 +4251,16 @@ ofctl_parse_actions__(const char *version_s, bool instructions)
                      &of_in, of_in.size, version, NULL, NULL, &ofpacts);
         if (!error && instructions) {
             /* Verify actions, enforce consistency. */
-            enum ofputil_protocol protocol;
-            struct match match;
-
-            memset(&match, 0, sizeof match);
-            protocol = ofputil_protocols_from_ofp_version(version);
-            error = ofpacts_check_consistency(ofpacts.data, ofpacts.size,
-                                              &match, OFPP_MAX,
-                                              table_id ? atoi(table_id) : 0,
-                                              OFPTT_MAX + 1, protocol);
+            struct match match = MATCH_CATCHALL_INITIALIZER;
+            struct ofpact_check_params cp = {
+                .match = &match,
+                .max_ports = OFPP_MAX,
+                .table_id = table_id ? atoi(table_id) : 0,
+                .n_tables = OFPTT_MAX + 1,
+            };
+            error = ofpacts_check_consistency(
+                ofpacts.data, ofpacts.size,
+                ofputil_protocols_from_ofp_version(version), &cp);
         }
         if (error) {
             printf("bad %s %s: %s\n\n",

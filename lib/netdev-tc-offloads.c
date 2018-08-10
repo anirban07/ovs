@@ -430,10 +430,21 @@ parse_tc_flower_to_match(struct tc_flower *flower,
     match_set_dl_src_masked(match, key->src_mac, mask->src_mac);
     match_set_dl_dst_masked(match, key->dst_mac, mask->dst_mac);
 
-    if (key->eth_type == htons(ETH_TYPE_VLAN)) {
-        match_set_dl_vlan(match, htons(key->vlan_id));
-        match_set_dl_vlan_pcp(match, key->vlan_prio);
-        match_set_dl_type(match, key->encap_eth_type);
+    if (eth_type_vlan(key->eth_type)) {
+        match->flow.vlans[0].tpid = key->eth_type;
+        match->wc.masks.vlans[0].tpid = OVS_BE16_MAX;
+        match_set_dl_vlan(match, htons(key->vlan_id[0]), 0);
+        match_set_dl_vlan_pcp(match, key->vlan_prio[0], 0);
+
+        if (eth_type_vlan(key->encap_eth_type[0])) {
+            match_set_dl_vlan(match, htons(key->vlan_id[1]), 1);
+            match_set_dl_vlan_pcp(match, key->vlan_prio[1], 1);
+            match_set_dl_type(match, key->encap_eth_type[1]);
+            match->flow.vlans[1].tpid = key->encap_eth_type[0];
+            match->wc.masks.vlans[1].tpid = OVS_BE16_MAX;
+        } else {
+            match_set_dl_type(match, key->encap_eth_type[0]);
+        }
         flow_fix_vlan_tpid(&match->flow);
     } else {
         match_set_dl_type(match, key->eth_type);
@@ -444,6 +455,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
             match_set_nw_proto(match, key->ip_proto);
         }
 
+        match_set_nw_tos_masked(match, key->ip_tos, mask->ip_tos);
         match_set_nw_ttl_masked(match, key->ip_ttl, mask->ip_ttl);
 
         if (mask->flags) {
@@ -498,6 +510,12 @@ parse_tc_flower_to_match(struct tc_flower *flower,
             match_set_tun_ipv6_src(match, &flower->tunnel.ipv6.ipv6_src);
             match_set_tun_ipv6_dst(match, &flower->tunnel.ipv6.ipv6_dst);
         }
+        if (flower->tunnel.tos) {
+            match_set_tun_tos(match, flower->tunnel.tos);
+        }
+        if (flower->tunnel.ttl) {
+            match_set_tun_ttl(match, flower->tunnel.ttl);
+        }
         if (flower->tunnel.tp_dst) {
             match_set_tun_tp_dst(match, flower->tunnel.tp_dst);
         }
@@ -517,7 +535,7 @@ parse_tc_flower_to_match(struct tc_flower *flower,
 
                 push = nl_msg_put_unspec_zero(buf, OVS_ACTION_ATTR_PUSH_VLAN,
                                               sizeof *push);
-                push->vlan_tpid = htons(ETH_TYPE_VLAN);
+                push->vlan_tpid = action->vlan.vlan_push_tpid;
                 push->vlan_tci = htons(action->vlan.vlan_push_id
                                        | (action->vlan.vlan_push_prio << 13)
                                        | VLAN_CFI);
@@ -550,6 +568,14 @@ parse_tc_flower_to_match(struct tc_flower *flower,
                                   sizeof action->encap.ipv6.ipv6_dst)) {
                     nl_msg_put_in6_addr(buf, OVS_TUNNEL_KEY_ATTR_IPV6_DST,
                                         &action->encap.ipv6.ipv6_dst);
+                }
+                if (action->encap.tos) {
+                    nl_msg_put_u8(buf, OVS_TUNNEL_KEY_ATTR_TOS,
+                                  action->encap.tos);
+                }
+                if (action->encap.ttl) {
+                    nl_msg_put_u8(buf, OVS_TUNNEL_KEY_ATTR_TTL,
+                                  action->encap.ttl);
                 }
                 nl_msg_put_be16(buf, OVS_TUNNEL_KEY_ATTR_TP_DST,
                                 action->encap.tp_dst);
@@ -732,6 +758,14 @@ parse_put_flow_set_action(struct tc_flower *flower, struct tc_action *action,
         break;
         case OVS_TUNNEL_KEY_ATTR_IPV4_DST: {
             action->encap.ipv4.ipv4_dst = nl_attr_get_be32(tun_attr);
+        }
+        break;
+        case OVS_TUNNEL_KEY_ATTR_TOS: {
+            action->encap.tos = nl_attr_get_u8(tun_attr);
+        }
+        break;
+        case OVS_TUNNEL_KEY_ATTR_TTL: {
+            action->encap.ttl = nl_attr_get_u8(tun_attr);
         }
         break;
         case OVS_TUNNEL_KEY_ATTR_IPV6_SRC: {
@@ -935,6 +969,8 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         flower.tunnel.ipv4.ipv4_dst = tnl->ip_dst;
         flower.tunnel.ipv6.ipv6_src = tnl->ipv6_src;
         flower.tunnel.ipv6.ipv6_dst = tnl->ipv6_dst;
+        flower.tunnel.tos = tnl->ip_tos;
+        flower.tunnel.ttl = tnl->ip_ttl;
         flower.tunnel.tp_src = tnl->tp_src;
         flower.tunnel.tp_dst = tnl->tp_dst;
         flower.tunnel.tunnel = true;
@@ -954,15 +990,16 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             && (!pcp_mask || pcp_mask == htons(VLAN_PCP_MASK))
             && (vid_mask || pcp_mask)) {
             if (vid_mask) {
-                flower.key.vlan_id = vlan_tci_to_vid(key->vlans[0].tci);
-                VLOG_DBG_RL(&rl, "vlan_id: %d\n", flower.key.vlan_id);
+                flower.key.vlan_id[0] = vlan_tci_to_vid(key->vlans[0].tci);
+                VLOG_DBG_RL(&rl, "vlan_id[0]: %d\n", flower.key.vlan_id[0]);
             }
             if (pcp_mask) {
-                flower.key.vlan_prio = vlan_tci_to_pcp(key->vlans[0].tci);
-                VLOG_DBG_RL(&rl, "vlan_prio: %d\n", flower.key.vlan_prio);
+                flower.key.vlan_prio[0] = vlan_tci_to_pcp(key->vlans[0].tci);
+                VLOG_DBG_RL(&rl, "vlan_prio[0]: %d\n",
+                            flower.key.vlan_prio[0]);
             }
-            flower.key.encap_eth_type = flower.key.eth_type;
-            flower.key.eth_type = htons(ETH_TYPE_VLAN);
+            flower.key.encap_eth_type[0] = flower.key.eth_type;
+            flower.key.eth_type = key->vlans[0].tpid;
         } else if (mask->vlans[0].tci == htons(0xffff) &&
                    ntohs(key->vlans[0].tci) == 0) {
             /* exact && no vlan */
@@ -970,8 +1007,34 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             /* partial mask */
             return EOPNOTSUPP;
         }
-    } else if (mask->vlans[1].tci) {
-        return EOPNOTSUPP;
+    }
+
+    if (mask->vlans[1].tci) {
+        ovs_be16 vid_mask = mask->vlans[1].tci & htons(VLAN_VID_MASK);
+        ovs_be16 pcp_mask = mask->vlans[1].tci & htons(VLAN_PCP_MASK);
+        ovs_be16 cfi = mask->vlans[1].tci & htons(VLAN_CFI);
+
+        if (cfi && key->vlans[1].tci & htons(VLAN_CFI)
+            && (!vid_mask || vid_mask == htons(VLAN_VID_MASK))
+            && (!pcp_mask || pcp_mask == htons(VLAN_PCP_MASK))
+            && (vid_mask || pcp_mask)) {
+            if (vid_mask) {
+                flower.key.vlan_id[1] = vlan_tci_to_vid(key->vlans[1].tci);
+                VLOG_DBG_RL(&rl, "vlan_id[1]: %d", flower.key.vlan_id[1]);
+            }
+            if (pcp_mask) {
+                flower.key.vlan_prio[1] = vlan_tci_to_pcp(key->vlans[1].tci);
+                VLOG_DBG_RL(&rl, "vlan_prio[1]: %d", flower.key.vlan_prio[1]);
+            }
+            flower.key.encap_eth_type[1] = flower.key.encap_eth_type[0];
+            flower.key.encap_eth_type[0] = key->vlans[1].tpid;
+        } else if (mask->vlans[1].tci == htons(0xffff) &&
+                   ntohs(key->vlans[1].tci) == 0) {
+            /* exact && no vlan */
+        } else {
+            /* partial mask */
+            return EOPNOTSUPP;
+        }
     }
     memset(mask->vlans, 0, sizeof mask->vlans);
 
@@ -987,8 +1050,13 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
     if (is_ip_any(key)) {
         flower.key.ip_proto = key->nw_proto;
         flower.mask.ip_proto = mask->nw_proto;
+        mask->nw_proto = 0;
+        flower.key.ip_tos = key->nw_tos;
+        flower.mask.ip_tos = mask->nw_tos;
+        mask->nw_tos = 0;
         flower.key.ip_ttl = key->nw_ttl;
         flower.mask.ip_ttl = mask->nw_ttl;
+        mask->nw_ttl = 0;
 
         if (mask->nw_frag & FLOW_NW_FRAG_ANY) {
             flower.mask.flags |= TCA_FLOWER_KEY_FLAGS_IS_FRAGMENT;
@@ -1034,10 +1102,6 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
             mask->tp_dst = 0;
         }
 
-        mask->nw_tos = 0;
-        mask->nw_proto = 0;
-        mask->nw_ttl = 0;
-
         if (key->dl_type == htons(ETH_P_IP)) {
             flower.key.ipv4.ipv4_src = key->nw_src;
             flower.mask.ipv4.ipv4_src = mask->nw_src;
@@ -1077,6 +1141,7 @@ netdev_tc_flow_put(struct netdev *netdev, struct match *match,
         } else if (nl_attr_type(nla) == OVS_ACTION_ATTR_PUSH_VLAN) {
             const struct ovs_action_push_vlan *vlan_push = nl_attr_get(nla);
 
+            action->vlan.vlan_push_tpid = vlan_push->vlan_tpid;
             action->vlan.vlan_push_id = vlan_tci_to_vid(vlan_push->vlan_tci);
             action->vlan.vlan_push_prio = vlan_tci_to_pcp(vlan_push->vlan_tci);
             action->type = TC_ACT_VLAN_PUSH;

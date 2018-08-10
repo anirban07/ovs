@@ -666,10 +666,38 @@ xlate_report_error(const struct xlate_ctx *ctx, const char *format, ...)
     if (ctx->xin->trace) {
         oftrace_report(ctx->xin->trace, OFT_ERROR, ds_cstr(&s));
     } else {
-        ds_put_cstr(&s, " while processing ");
+        ds_put_format(&s, " on bridge %s while processing ",
+                      ctx->xbridge->name);
         flow_format(&s, &ctx->base_flow, NULL);
-        ds_put_format(&s, " on bridge %s", ctx->xbridge->name);
         VLOG_WARN("%s", ds_cstr(&s));
+    }
+    ds_destroy(&s);
+}
+
+/* This is like xlate_report() for messages that should be logged
+   at the info level (even when not tracing). */
+static void OVS_PRINTF_FORMAT(2, 3)
+xlate_report_info(const struct xlate_ctx *ctx, const char *format, ...)
+{
+    static struct vlog_rate_limit rl = VLOG_RATE_LIMIT_INIT(1, 5);
+    if (!OVS_UNLIKELY(ctx->xin->trace)
+        && (!ctx->xin->packet || VLOG_DROP_INFO(&rl))) {
+        return;
+    }
+
+    struct ds s = DS_EMPTY_INITIALIZER;
+    va_list args;
+    va_start(args, format);
+    ds_put_format_valist(&s, format, args);
+    va_end(args);
+
+    if (ctx->xin->trace) {
+        oftrace_report(ctx->xin->trace, OFT_WARN, ds_cstr(&s));
+    } else {
+        ds_put_format(&s, " on bridge %s while processing ",
+                      ctx->xbridge->name);
+        flow_format(&s, &ctx->base_flow, NULL);
+        VLOG_INFO("%s", ds_cstr(&s));
     }
     ds_destroy(&s);
 }
@@ -4619,6 +4647,7 @@ static void
 xlate_controller_action(struct xlate_ctx *ctx, int len,
                         enum ofp_packet_in_reason reason,
                         uint16_t controller_id,
+                        uint32_t provider_meter_id,
                         const uint8_t *userdata, size_t userdata_len)
 {
     xlate_commit_actions(ctx);
@@ -4655,9 +4684,21 @@ xlate_controller_action(struct xlate_ctx *ctx, int len,
     }
     recirc_refs_add(&ctx->xout->recircs, recirc_id);
 
+    /* If the controller action didn't request a meter (indicated by a
+     * 'meter_id' argument other than NX_CTLR_NO_METER), see if one was
+     * configured through the "controller" virtual meter.
+     *
+     * Internally, ovs-vswitchd uses UINT32_MAX to indicate no meter is
+     * configured. */
+    uint32_t meter_id;
+    if (provider_meter_id == UINT32_MAX) {
+        meter_id = ctx->xbridge->ofproto->up.controller_meter_id;
+    } else {
+        meter_id = provider_meter_id;
+    }
+
     size_t offset;
     size_t ac_offset;
-    uint32_t meter_id = ctx->xbridge->ofproto->up.controller_meter_id;
     if (meter_id != UINT32_MAX) {
         /* If controller meter is configured, generate clone(meter, userspace)
          * action. */
@@ -4852,7 +4893,7 @@ compose_dec_ttl(struct xlate_ctx *ctx, struct ofpact_cnt_ids *ids)
 
         for (i = 0; i < ids->n_controllers; i++) {
             xlate_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL,
-                                    ids->cnt_ids[i], NULL, 0);
+                                    ids->cnt_ids[i], UINT32_MAX, NULL, 0);
         }
 
         /* Stop processing for current table. */
@@ -4893,7 +4934,7 @@ compose_dec_nsh_ttl_action(struct xlate_ctx *ctx)
             return false;
         } else {
             xlate_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL,
-                                    0, NULL, 0);
+                                    0, UINT32_MAX, NULL, 0);
         }
     }
 
@@ -4926,7 +4967,7 @@ compose_dec_mpls_ttl_action(struct xlate_ctx *ctx)
             return false;
         } else {
             xlate_controller_action(ctx, UINT16_MAX, OFPR_INVALID_TTL, 0,
-                                    NULL, 0);
+                                    UINT32_MAX, NULL, 0);
         }
     }
 
@@ -4985,7 +5026,7 @@ xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port,
                                  : group_bucket_action ? OFPR_GROUP
                                  : ctx->in_action_set ? OFPR_ACTION_SET
                                  : OFPR_ACTION),
-                                0, NULL, 0);
+                                0, UINT32_MAX, NULL, 0);
         break;
     case OFPP_NONE:
         break;
@@ -4994,7 +5035,7 @@ xlate_output_action(struct xlate_ctx *ctx, ofp_port_t port,
         if (port != ctx->xin->flow.in_port.ofp_port) {
             compose_output_action(ctx, port, NULL, is_last_action, truncate);
         } else {
-            xlate_report(ctx, OFT_WARN, "skipping output to input port");
+            xlate_report_info(ctx, "skipping output to input port");
         }
         break;
     }
@@ -5079,7 +5120,7 @@ xlate_output_trunc_action(struct xlate_ctx *ctx,
                 ctx->xout->slow |= SLOW_ACTION;
             }
         } else {
-            xlate_report(ctx, OFT_WARN, "skipping output to input port");
+            xlate_report_info(ctx, "skipping output to input port");
         }
         break;
     }
@@ -6392,6 +6433,7 @@ do_xlate_actions(const struct ofpact *ofpacts, size_t ofpacts_len,
                 xlate_controller_action(ctx, controller->max_len,
                                         controller->reason,
                                         controller->controller_id,
+                                        controller->provider_meter_id,
                                         controller->userdata,
                                         controller->userdata_len);
             }

@@ -24,6 +24,7 @@
 #include "db-ctl-base.h"
 #include "dirs.h"
 #include "fatal-signal.h"
+#include "jsonrpc.h"
 #include "openvswitch/json.h"
 #include "ovn/lib/acl-log.h"
 #include "ovn/lib/ovn-nb-idl.h"
@@ -91,7 +92,15 @@ static unixctl_cb_func server_cmd_run;
 
 static void nbctl_cmd_init(void);
 OVS_NO_RETURN static void usage(void);
-static void parse_options(int argc, char *argv[], struct shash *local_options);
+static struct option *get_all_options(void);
+static bool has_option(const struct ovs_cmdl_parsed_option *, size_t n,
+                       int option);
+static void nbctl_client(const char *socket_name,
+                         const struct ovs_cmdl_parsed_option *, size_t n,
+                         int argc, char *argv[]);
+static bool will_detach(const struct ovs_cmdl_parsed_option *, size_t n);
+static void apply_options_direct(const struct ovs_cmdl_parsed_option *,
+                                 size_t n, struct shash *local_options);
 static char * OVS_WARN_UNUSED_RESULT run_prerequisites(struct ctl_command[],
                                                        size_t n_commands,
                                                        struct ovsdb_idl *);
@@ -123,10 +132,47 @@ main(int argc, char *argv[])
 
     nbctl_cmd_init();
 
-    /* Parse command line. */
+    /* ovn-nbctl has three operation modes:
+     *
+     *    - Direct: Executes commands by contacting ovsdb-server directly.
+     *
+     *    - Server: Runs in the background as a daemon waiting for requests
+     *      from ovn-nbctl running in client mode.
+     *
+     *    - Client: Executes commands by passing them to an ovn-nbctl running
+     *      in the server mode.
+     *
+     * At this point we don't know what mode we're running in.  The mode partly
+     * depends on the command line.  So, for now we transform the command line
+     * into a parsed form, and figure out what to do with it later.
+     */
     char *args = process_escape_args(argv);
+    struct ovs_cmdl_parsed_option *parsed_options;
+    size_t n_parsed_options;
+    char *error_s = ovs_cmdl_parse_all(argc, argv, get_all_options(),
+                                       &parsed_options, &n_parsed_options);
+    if (error_s) {
+        ctl_fatal("%s", error_s);
+    }
+
+    /* Now figure out the operation mode:
+     *
+     *    - A --detach option implies server mode.
+     *
+     *    - An OVN_NB_DAEMON environment variable implies client mode.
+     *
+     *    - Otherwise, we're in direct mode. */
+    char *socket_name = getenv("OVN_NB_DAEMON");
+    if (socket_name && socket_name[0]
+        && !will_detach(parsed_options, n_parsed_options)) {
+        nbctl_client(socket_name, parsed_options, n_parsed_options,
+                     argc, argv);
+    }
+
+    /* Parse command line. */
     shash_init(&local_options);
-    parse_options(argc, argv, &local_options);
+    apply_options_direct(parsed_options, n_parsed_options, &local_options);
+    free(parsed_options);
     argc -= optind;
     argv += optind;
 
@@ -256,6 +302,8 @@ enum {
     OPT_LOCAL,
     OPT_COMMANDS,
     OPT_OPTIONS,
+    OPT_LEADER_ONLY,
+    OPT_NO_LEADER_ONLY,
     OPT_BOOTSTRAP_CA_CERT,
     MAIN_LOOP_OPTION_ENUMS,
     DAEMON_OPTION_ENUMS,
@@ -347,8 +395,8 @@ append_command_options(const struct option *options, int opt_val)
     return o;
 }
 
-static void
-parse_options(int argc, char *argv[], struct shash *local_options)
+static struct option *
+get_all_options(void)
 {
     static const struct option global_long_options[] = {
         {"db", required_argument, NULL, OPT_DB},
@@ -356,8 +404,8 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         {"help", no_argument, NULL, 'h'},
         {"commands", no_argument, NULL, OPT_COMMANDS},
         {"options", no_argument, NULL, OPT_OPTIONS},
-        {"leader-only", no_argument, &leader_only, true},
-        {"no-leader-only", no_argument, &leader_only, false},
+        {"leader-only", no_argument, NULL, OPT_LEADER_ONLY},
+        {"no-leader-only", no_argument, NULL, OPT_NO_LEADER_ONLY},
         {"version", no_argument, NULL, 'V'},
         MAIN_LOOP_LONG_OPTIONS,
         DAEMON_LONG_OPTIONS,
@@ -367,25 +415,57 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         TABLE_LONG_OPTIONS,
         {NULL, 0, NULL, 0},
     };
-    const int n_global_long_options = ARRAY_SIZE(global_long_options) - 1;
-    char *short_options;
-    struct option *options;
-    size_t i;
 
-    short_options = build_short_options(global_long_options, true);
-    options = append_command_options(global_long_options, OPT_LOCAL);
+    static struct option *options;
+    if (!options) {
+        options = append_command_options(global_long_options, OPT_LOCAL);
+    }
 
-    for (;;) {
-        int idx;
-        int c;
+    return options;
+}
 
-        c = getopt_long(argc, argv, short_options, options, &idx);
-        if (c == -1) {
-            break;
+static bool
+has_option(const struct ovs_cmdl_parsed_option *parsed_options, size_t n,
+           int option)
+{
+    for (const struct ovs_cmdl_parsed_option *po = parsed_options;
+         po < &parsed_options[n]; po++) {
+        if (po->o->val == option) {
+            return true;
         }
+    }
+    return false;
+}
 
+static bool
+will_detach(const struct ovs_cmdl_parsed_option *parsed_options, size_t n)
+{
+    return has_option(parsed_options, n, OPT_DETACH);
+}
+
+static char * OVS_WARN_UNUSED_RESULT
+add_local_option(const char *name, const char *arg,
+                 struct shash *local_options)
+{
+    char *full_name = xasprintf("--%s", name);
+    if (shash_find(local_options, full_name)) {
+        char *error = xasprintf("'%s' option specified multiple times",
+                                full_name);
+        free(full_name);
+        return error;
+    }
+    shash_add_nocopy(local_options, full_name, nullable_xstrdup(arg));
+    return NULL;
+}
+
+static void
+apply_options_direct(const struct ovs_cmdl_parsed_option *parsed_options,
+                     size_t n, struct shash *local_options)
+{
+    for (const struct ovs_cmdl_parsed_option *po = parsed_options;
+         po < &parsed_options[n]; po++) {
         bool handled;
-        char *error = handle_main_loop_option(c, optarg, &handled);
+        char *error = handle_main_loop_option(po->o->val, po->arg, &handled);
         if (error) {
             ctl_fatal("%s", error);
         }
@@ -393,9 +473,10 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             continue;
         }
 
-        switch (c) {
+        optarg = po->arg;
+        switch (po->o->val) {
         case OPT_DB:
-            db = optarg;
+            db = po->arg;
             break;
 
         case OPT_NO_SYSLOG:
@@ -403,13 +484,10 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             break;
 
         case OPT_LOCAL:
-            if (shash_find(local_options, options[idx].name)) {
-                ctl_fatal("'%s' option specified multiple times",
-                            options[idx].name);
+            error = add_local_option(po->o->name, po->arg, local_options);
+            if (error) {
+                ctl_fatal("%s", error);
             }
-            shash_add_nocopy(local_options,
-                             xasprintf("--%s", options[idx].name),
-                             nullable_xstrdup(optarg));
             break;
 
         case 'h':
@@ -421,8 +499,16 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             /* fall through */
 
         case OPT_OPTIONS:
-            ctl_print_options(global_long_options);
+            ctl_print_options(get_all_options());
             /* fall through */
+
+        case OPT_LEADER_ONLY:
+            leader_only = true;
+            break;
+
+        case OPT_NO_LEADER_ONLY:
+            leader_only = false;
+            break;
 
         case 'V':
             ovs_print_version(0, 0);
@@ -435,7 +521,7 @@ parse_options(int argc, char *argv[], struct shash *local_options)
         STREAM_SSL_OPTION_HANDLERS
 
         case OPT_BOOTSTRAP_CA_CERT:
-            stream_ssl_set_ca_cert_file(optarg, true);
+            stream_ssl_set_ca_cert_file(po->arg, true);
             break;
 
         case '?':
@@ -448,16 +534,10 @@ parse_options(int argc, char *argv[], struct shash *local_options)
             break;
         }
     }
-    free(short_options);
 
     if (!db) {
         db = default_nb_db();
     }
-
-    for (i = n_global_long_options; options[i].name; i++) {
-        free(CONST_CAST(char *, options[i].name));
-    }
-    free(options);
 }
 
 static void
@@ -495,6 +575,12 @@ QoS commands:\n\
   qos-del SWITCH [DIRECTION [PRIORITY MATCH]]\n\
                             remove QoS rules from SWITCH\n\
   qos-list SWITCH           print QoS rules for SWITCH\n\
+\n\
+Meter commands:\n\
+  meter-add NAME ACTION RATE UNIT [BURST]\n\
+                            add a meter\n\
+  meter-del [NAME]          remove meters\n\
+  meter-list                print meters\n\
 \n\
 Logical switch port commands:\n\
   lsp-add SWITCH PORT       add logical port PORT on SWITCH\n\
@@ -635,6 +721,10 @@ Other options:\n\
     exit(EXIT_SUCCESS);
 }
 
+/* One should not use ctl_fatal() within commands because it will kill the
+ * daemon if we're in daemon mode.  Use ctl_error() instead and return
+ * gracefully.  */
+#define ctl_fatal dont_use_ctl_fatal_use_ctl_error_and_return
 
 /* Find a logical router given its id. */
 static char * OVS_WARN_UNUSED_RESULT
@@ -1816,7 +1906,10 @@ nbctl_acl_list(struct ctl_context *ctx)
                 ds_put_format(&ctx->output, "name=%s,", acl->name);
             }
             if (acl->severity) {
-                ds_put_format(&ctx->output, "severity=%s", acl->severity);
+                ds_put_format(&ctx->output, "severity=%s,", acl->severity);
+            }
+            if (acl->meter) {
+                ds_put_format(&ctx->output, "meter=\"%s\",", acl->meter);
             }
             ds_chomp(&ctx->output, ',');
             ds_put_cstr(&ctx->output, ")");
@@ -1870,6 +1963,9 @@ parse_priority(const char *arg, int64_t *priority_p)
     int64_t priority;
     if (!ovs_scan(arg, "%"SCNd64, &priority)
         || priority < 0 || priority > 32767) {
+        /* Priority_p could be uninitialized as no valid priority was
+         * input, initialize it to a valid value of 0 before returning */
+        *priority_p = 0;
         return xasprintf("%s: priority must in range 0...32767", arg);
     }
     *priority_p = priority;
@@ -1921,7 +2017,8 @@ nbctl_acl_add(struct ctl_context *ctx)
     bool log = shash_find(&ctx->options, "--log") != NULL;
     const char *severity = shash_find_data(&ctx->options, "--severity");
     const char *name = shash_find_data(&ctx->options, "--name");
-    if (log || severity || name) {
+    const char *meter = shash_find_data(&ctx->options, "--meter");
+    if (log || severity || name || meter) {
         nbrec_acl_set_log(acl, true);
     }
     if (severity) {
@@ -1933,6 +2030,9 @@ nbctl_acl_add(struct ctl_context *ctx)
     }
     if (name) {
         nbrec_acl_set_name(acl, name);
+    }
+    if (meter) {
+        nbrec_acl_set_meter(acl, meter);
     }
 
     /* Check if same acl already exists for the ls/portgroup */
@@ -2287,6 +2387,143 @@ nbctl_qos_del(struct ctl_context *ctx)
             free(new_qos_rules);
             return;
         }
+    }
+}
+
+static int
+meter_cmp(const void *meter1_, const void *meter2_)
+{
+    struct nbrec_meter *const *meter1p = meter1_;
+    struct nbrec_meter *const *meter2p = meter2_;
+    const struct nbrec_meter *meter1 = *meter1p;
+    const struct nbrec_meter *meter2 = *meter2p;
+
+    return strcmp(meter1->name, meter2->name);
+}
+
+static void
+nbctl_meter_list(struct ctl_context *ctx)
+{
+    const struct nbrec_meter **meters = NULL;
+    const struct nbrec_meter *meter;
+    size_t n_capacity = 0;
+    size_t n_meters = 0;
+
+    NBREC_METER_FOR_EACH (meter, ctx->idl) {
+        if (n_meters == n_capacity) {
+            meters = x2nrealloc(meters, &n_capacity, sizeof *meters);
+        }
+
+        meters[n_meters] = meter;
+        n_meters++;
+    }
+
+    if (n_meters) {
+        qsort(meters, n_meters, sizeof *meters, meter_cmp);
+    }
+
+    for (size_t i = 0; i < n_meters; i++) {
+        meter = meters[i];
+        ds_put_format(&ctx->output, "%s: bands:\n", meter->name);
+
+        for (size_t j = 0; j < meter->n_bands; j++) {
+            const struct nbrec_meter_band *band = meter->bands[j];
+
+            ds_put_format(&ctx->output, "  %s: %"PRId64" %s",
+                          band->action, band->rate, meter->unit);
+            if (band->burst_size) {
+                ds_put_format(&ctx->output, ", %"PRId64" %s burst",
+                              band->burst_size,
+                              !strcmp(meter->unit, "kbps") ? "kb" : "packet" );
+            }
+        }
+
+        ds_put_cstr(&ctx->output, "\n");
+    }
+
+    free(meters);
+}
+
+static void
+nbctl_meter_add(struct ctl_context *ctx)
+{
+    const struct nbrec_meter *meter;
+
+    const char *name = ctx->argv[1];
+    NBREC_METER_FOR_EACH (meter, ctx->idl) {
+        if (!strcmp(meter->name, name)) {
+            ctl_error(ctx, "meter with name \"%s\" already exists", name);
+            return;
+        }
+    }
+
+    if (!strncmp(name, "__", 2)) {
+        ctl_error(ctx, "meter names that begin with \"__\" are reserved");
+        return;
+    }
+
+    const char *action = ctx->argv[2];
+    if (strcmp(action, "drop")) {
+        ctl_error(ctx, "action must be \"drop\"");
+        return;
+    }
+
+    int64_t rate;
+    if (!ovs_scan(ctx->argv[3], "%"SCNd64, &rate)
+        || rate < 1 || rate > UINT32_MAX) {
+        ctl_error(ctx, "rate must be in the range 1...4294967295");
+        return;
+    }
+
+    const char *unit = ctx->argv[4];
+    if (strcmp(unit, "kbps") && strcmp(unit, "pktps")) {
+        ctl_error(ctx, "unit must be \"kbps\" or \"pktps\"");
+        return;
+    }
+
+    int64_t burst = 0;
+    if (ctx->argc > 5) {
+        if (!ovs_scan(ctx->argv[5], "%"SCNd64, &burst)
+            || burst < 0 || burst > UINT32_MAX) {
+            ctl_error(ctx, "burst must be in the range 0...4294967295");
+            return;
+        }
+    }
+
+    /* Create the band.  We only support adding a single band. */
+    struct nbrec_meter_band *band = nbrec_meter_band_insert(ctx->txn);
+    nbrec_meter_band_set_action(band, action);
+    nbrec_meter_band_set_rate(band, rate);
+    nbrec_meter_band_set_burst_size(band, burst);
+
+    /* Create the meter. */
+    meter = nbrec_meter_insert(ctx->txn);
+    nbrec_meter_set_name(meter, name);
+    nbrec_meter_set_unit(meter, unit);
+    nbrec_meter_set_bands(meter, &band, 1);
+}
+
+static void
+nbctl_meter_del(struct ctl_context *ctx)
+{
+    const struct nbrec_meter *meter, *next;
+
+    /* If a name is not specified, delete all meters. */
+    if (ctx->argc == 1) {
+        NBREC_METER_FOR_EACH_SAFE (meter, next, ctx->idl) {
+            nbrec_meter_delete(meter);
+        }
+        return;
+    }
+
+    /* Remove the matching meter. */
+    NBREC_METER_FOR_EACH (meter, ctx->idl) {
+        if (strcmp(ctx->argv[1], meter->name)) {
+            continue;
+        }
+
+        nbrec_meter_delete(meter);
+        return;
     }
 }
 
@@ -2899,10 +3136,11 @@ dhcp_options_get(struct ctl_context *ctx, const char *id, bool must_exist,
         dhcp_opts = nbrec_dhcp_options_get_for_uuid(ctx->idl, &dhcp_opts_uuid);
     }
 
+    *dhcp_opts_p = dhcp_opts;
     if (!dhcp_opts && must_exist) {
         return xasprintf("%s: dhcp options UUID not found", id);
     }
-    *dhcp_opts_p = dhcp_opts;
+
     return NULL;
 }
 
@@ -4369,6 +4607,9 @@ static const struct ctl_table_class tables[NBREC_N_TABLES] = {
     [NBREC_TABLE_ADDRESS_SET].row_ids[0]
     = {&nbrec_address_set_col_name, NULL, NULL},
 
+    [NBREC_TABLE_PORT_GROUP].row_ids[0]
+    = {&nbrec_port_group_col_name, NULL, NULL},
+
     [NBREC_TABLE_ACL].row_ids[0] = {&nbrec_acl_col_name, NULL, NULL},
 };
 
@@ -4664,7 +4905,7 @@ static const struct ctl_command_syntax nbctl_commands[] = {
     /* acl commands. */
     { "acl-add", 5, 6, "{SWITCH | PORTGROUP} DIRECTION PRIORITY MATCH ACTION",
       NULL, nbctl_acl_add, NULL,
-      "--log,--may-exist,--type=,--name=,--severity=", RW },
+      "--log,--may-exist,--type=,--name=,--severity=,--meter=", RW },
     { "acl-del", 1, 4, "{SWITCH | PORTGROUP} [DIRECTION [PRIORITY MATCH]]",
       NULL, nbctl_acl_del, NULL, "--type=", RW },
     { "acl-list", 1, 1, "{SWITCH | PORTGROUP}",
@@ -4677,6 +4918,12 @@ static const struct ctl_command_syntax nbctl_commands[] = {
     { "qos-del", 1, 4, "SWITCH [DIRECTION [PRIORITY MATCH]]", NULL,
       nbctl_qos_del, NULL, "", RW },
     { "qos-list", 1, 1, "SWITCH", NULL, nbctl_qos_list, NULL, "", RO },
+
+    /* meter commands. */
+    { "meter-add", 4, 5, "NAME ACTION RATE UNIT [BURST]", NULL,
+      nbctl_meter_add, NULL, "", RW },
+    { "meter-del", 0, 1, "[NAME]", NULL, nbctl_meter_del, NULL, "", RW },
+    { "meter-list", 0, 0, "", NULL, nbctl_meter_list, NULL, "", RO },
 
     /* logical switch port commands. */
     { "lsp-add", 2, 4, "SWITCH PORT [PARENT] [TAG]", NULL, nbctl_lsp_add,
@@ -4808,12 +5055,30 @@ nbctl_cmd_init(void)
     ctl_init(&nbrec_idl_class, nbrec_table_classes, tables, NULL, nbctl_exit);
     ctl_register_commands(nbctl_commands);
 }
+
+/* Server implementation. */
+
+#undef ctl_fatal
+
+static const struct option *
+find_option_by_value(const struct option *options, int value)
+{
+    const struct option *o;
+
+    for (o = options; o->name; o++) {
+        if (o->val == value) {
+            return o;
+        }
+    }
+    return NULL;
+}
 
 static char * OVS_WARN_UNUSED_RESULT
 server_parse_options(int argc, char *argv[], struct shash *local_options,
                      int *n_options_p)
 {
     static const struct option global_long_options[] = {
+        VLOG_LONG_OPTIONS,
         MAIN_LOOP_LONG_OPTIONS,
         TABLE_LONG_OPTIONS,
         {NULL, 0, NULL, 0},
@@ -4828,7 +5093,7 @@ server_parse_options(int argc, char *argv[], struct shash *local_options,
     short_options = build_short_options(global_long_options, false);
     options = append_command_options(global_long_options, OPT_LOCAL);
 
-    optind = 1;
+    optind = 0;
     opterr = 0;
     for (;;) {
         int idx;
@@ -4850,23 +5115,21 @@ server_parse_options(int argc, char *argv[], struct shash *local_options,
 
         switch (c) {
         case OPT_LOCAL:
-            if (shash_find(local_options, options[idx].name)) {
-                error = xasprintf("'%s' option specified multiple times",
-                                  options[idx].name);
+            error = add_local_option(options[idx].name, optarg, local_options);
+            if (error) {
                 goto out;
             }
-            shash_add_nocopy(local_options,
-                             xasprintf("--%s", options[idx].name),
-                             nullable_xstrdup(optarg));
             break;
 
         VLOG_OPTION_HANDLERS
         TABLE_OPTION_HANDLERS(&table_style)
 
         case '?':
-            if (optopt) {
+            if (find_option_by_value(options, optopt)) {
                 error = xasprintf("option '%s' doesn't allow an argument",
                                   argv[optind-1]);
+            } else if (optopt) {
+                error = xasprintf("unrecognized option '%c'", optopt);
             } else {
                 error = xasprintf("unrecognized option '%s'", argv[optind-1]);
             }
@@ -5004,7 +5267,7 @@ static void
 server_cmd_init(struct ovsdb_idl *idl, bool *exiting)
 {
     unixctl_command_register("exit", "", 0, 0, server_cmd_exit, exiting);
-    unixctl_command_register("run", "", 1, INT_MAX, server_cmd_run, idl);
+    unixctl_command_register("run", "", 0, INT_MAX, server_cmd_run, idl);
 }
 
 static void
@@ -5019,6 +5282,8 @@ server_loop(struct ovsdb_idl *idl)
         ctl_fatal("failed to create unixctl server (%s)",
                   ovs_retval_to_string(error));
     }
+    puts(unixctl_server_get_path(server));
+    fflush(stdout);
     server_cmd_init(idl, &exiting);
 
     for (;;) {
@@ -5043,4 +5308,114 @@ server_loop(struct ovsdb_idl *idl)
     }
 
     unixctl_server_destroy(server);
+}
+
+static void
+nbctl_client(const char *socket_name,
+             const struct ovs_cmdl_parsed_option *parsed_options, size_t n,
+             int argc, char *argv[])
+{
+    struct svec args = SVEC_EMPTY_INITIALIZER;
+
+    for (const struct ovs_cmdl_parsed_option *po = parsed_options;
+         po < &parsed_options[n]; po++) {
+        optarg = po->arg;
+        switch (po->o->val) {
+        case OPT_DB:
+            VLOG_WARN("not using ovn-nbctl daemon because of %s option",
+                      po->o->name);
+            svec_destroy(&args);
+            return;
+
+        case OPT_NO_SYSLOG:
+            vlog_set_levels(&this_module, VLF_SYSLOG, VLL_WARN);
+            break;
+
+        case 'h':
+            usage();
+            exit(EXIT_SUCCESS);
+
+        case OPT_COMMANDS:
+            ctl_print_commands();
+            /* fall through */
+
+        case OPT_OPTIONS:
+            ctl_print_options(get_all_options());
+            /* fall through */
+
+        case OPT_LEADER_ONLY:
+        case OPT_NO_LEADER_ONLY:
+        case OPT_BOOTSTRAP_CA_CERT:
+        STREAM_SSL_CASES
+        DAEMON_OPTION_CASES
+            VLOG_INFO("using ovn-nbctl daemon, ignoring %s option",
+                      po->o->name);
+            break;
+
+        case 'V':
+            ovs_print_version(0, 0);
+            printf("DB Schema %s\n", nbrec_get_db_version());
+            exit(EXIT_SUCCESS);
+
+        case 't':
+            timeout = strtoul(po->arg, NULL, 10);
+            if (timeout < 0) {
+                ctl_fatal("value %s on -t or --timeout is invalid", po->arg);
+            }
+            break;
+
+        VLOG_OPTION_HANDLERS
+        TABLE_OPTION_HANDLERS(&table_style)
+
+        case OPT_LOCAL:
+        default:
+            if (po->arg) {
+                svec_add_nocopy(&args,
+                                xasprintf("--%s=%s", po->o->name, po->arg));
+            } else {
+                svec_add_nocopy(&args, xasprintf("--%s", po->o->name));
+            }
+            break;
+        }
+    }
+    svec_add(&args, "--");
+    for (int i = optind; i < argc; i++) {
+        svec_add(&args, argv[i]);
+    }
+
+    if (timeout) {
+        time_alarm(timeout);
+    }
+
+    struct jsonrpc *client;
+    int error = unixctl_client_create(socket_name, &client);
+    if (error) {
+        ctl_fatal("%s: could not connect to ovn-nb daemon (%s); "
+                  "unset OVN_NB_DAEMON to avoid using daemon",
+                  socket_name, ovs_strerror(error));
+    }
+
+    char *cmd_result;
+    char *cmd_error;
+    error = unixctl_client_transact(client, "run",
+                                    args.n, args.names,
+                                    &cmd_result, &cmd_error);
+    if (error) {
+        ctl_fatal("%s: transaction error (%s)",
+                  socket_name, ovs_strerror(error));
+    }
+    svec_destroy(&args);
+
+    int exit_status;
+    if (cmd_error) {
+        exit_status = EXIT_FAILURE;
+        fprintf(stderr, "%s: %s", program_name, cmd_error);
+    } else {
+        exit_status = EXIT_SUCCESS;
+        fputs(cmd_result, stdout);
+    }
+    free(cmd_result);
+    free(cmd_error);
+    jsonrpc_close(client);
+    exit(exit_status);
 }

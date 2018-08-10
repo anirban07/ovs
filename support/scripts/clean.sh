@@ -3,6 +3,6 @@
 PROJECT_ROOT=$(pwd)
 
 cd $PROJECT_ROOT && \
-	make clean
+    make clean
 
 rm -rf ${PROJECT_ROOT}/build/

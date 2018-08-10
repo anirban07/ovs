@@ -2,6 +2,8 @@
 
 #include "ldap-provider.h"
 
+VLOG_DEFINE_THIS_MODULE(ldap_provider)
+
 static
 int
 OvsSASLInteraction (
@@ -395,7 +397,6 @@ ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...)
         &pContext->ldap_conn
     );
     BAIL_ON_ERROR(err);
-
     *ppContext = pContext;
 
 cleanup:

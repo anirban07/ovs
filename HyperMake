@@ -5,39 +5,31 @@ name: ovs
 description: Open vSwitch
 
 targets:
-  rebuild-toolchain:
-      description: build toolchain image
-      watches:
-        - support/toolchain/docker/ovs
-      build: support/toolchain/docker/ovs
-      cache: false
-
-  toolchain:
+  toolchain-ubuntu:
     description: place-holder for future dependencies
 
-  bootstrap-ovs:
+  bootstrap-ubuntu-ovs:
     description: Bootstraps build
     after:
-      - toolchain
+      - toolchain-ubuntu
     watches:
       - '*.am'
       - '*.ac'
-    build: support/toolchain/docker/ovs
+    build: support/toolchain/docker/ovs-ubuntu
 
-  run-autoconf:
+  run-ubuntu-autoconf:
     description: Autoconf the Makefile
     after:
-      - bootstrap-ovs
+      - bootstrap-ubuntu-ovs
     watches:
       - '**/*.mk'
-      - support/scripts/gen-makefile.sh
     cmds:
       - ./support/scripts/gen-makefile.sh
 
-  build-ovs:
+  build-ubuntu-ovs:
     description: build Open vSwitch source code for Ubuntu:18.04
     after:
-      - run-autoconf
+      - run-ubuntu-autoconf
     watches:
       - support/scripts/build.sh
       - '**/*.c'
@@ -45,14 +37,10 @@ targets:
     cmds:
       - ./support/scripts/build.sh
 
-  build:
-    description: build source code
+  build-ubuntu:
+    description: build Open vSwitch source code for Ubuntu
     after:
-      - 'build-*'
-    watches:
-      - support/scripts/move-build.sh
-    cmds:
-      - ./support/scripts/move-build.sh
+      - 'build-ubuntu-*'
 
   check:
     description: perform unit test after the build
@@ -65,28 +53,80 @@ targets:
     cmds:
       - ./support/scripts/clean.sh
 
-  docker-ovs-base:
+  docker-ubuntu-ovs-base:
     description: build ovs base docker image
-    build: ./support/docker/base/ovs
-    image: 'ovs/ovs-base:1.0.0'
+    build: ./support/docker/base/ovs-ubuntu
+    image: 'ovs/ovs-ubuntu-base:1.0.0'
 
-  docker-ovs-pre:
+  docker-ubuntu-ovs-pre:
     description: Prepare for container build
     cmds:
-      - ./support/scripts/prep-container-build.sh
+      - ./support/scripts/prep-container-build.sh ubuntu
     always: true
 
-  docker-ovs:
+  docker-ubuntu-ovs:
     description: build secure docker image
-    build: ./build/docker
-    image: 'ovs/ovs:1.0.0'
+    build: ./build/docker/ubuntu
+    image: 'ovs/ovs-ubuntu:1.0.0'
     after:
-      - docker-ovs-pre
+      - docker-ubuntu-ovs-pre
+    cmds:
+      - ./support/scripts/post-container-build.sh
+
+  # hmake instructions for photon
+  toolchain-photon:
+    description: place-holder for future dependencies
+
+  bootstrap-photon-ovs:
+    description: Bootstraps build
+    after:
+      - toolchain-photon
+    watches:
+      - '*.am'
+      - '*.ac'
+    build: support/toolchain/docker/photon
+
+  run-photon-autoconf:
+    description: Autoconf the Makefile
+    after:
+      - bootstrap-photon-ovs
+    watches:
+      - '**/*.mk'
+    cmds:
+      - ./support/scripts/gen-makefile.sh
+
+  build-photon-ovs:
+    description: build Open vSwitch source code for PhotonOS
+    after:
+      - run-photon-autoconf
+    watches:
+      - support/scripts/build.sh
+      - '**/*.c'
+      - '**/*.h'
+    cmds:
+      - ./support/scripts/build.sh
+
+  build-photon:
+    description: build Open vSwitch source code for PhotonOS
+    after:
+      - 'build-photon-*'
+
+  docker-photon-ovs-pre:
+    description: Prepare for container build
+    cmds:
+      - ./support/scripts/prep-container-build.sh photon
+    always: true
+
+  docker-photon-ovs:
+    description: build secure docker image
+    build: ./build/docker/photon
+    after:
+      - docker-photon-ovs-pre
     cmds:
       - ./support/scripts/post-container-build.sh
 
 settings:
   default-targets:
-    - build
+    - build-photon
   docker:
-    image: 'ubuntu:18.04'
+    image: 'ovs/ovs-photon:1.0.0'

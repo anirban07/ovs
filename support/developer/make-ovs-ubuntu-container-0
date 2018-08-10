@@ -3,6 +3,7 @@
 docker run -d \
            --name ovs-0 \
            --net lightwave \
+           --privileged \
            --hostname ovs-0.lightwave.local \
            --ip 192.168.114.6 \
            --dns 192.168.114.3 \

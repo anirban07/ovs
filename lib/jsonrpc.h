@@ -22,6 +22,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include "svec.h"
 #include "openvswitch/types.h"
 
 struct json;
@@ -78,6 +79,21 @@ struct jsonrpc_msg {
     struct json *result;        /* Successful reply only. */
     struct json *error;         /* Error reply only. */
     struct json *id;            /* Request or reply only. */
+};
+
+/* A JSON-RPC session with reconnection. */
+
+struct jsonrpc_session {
+    struct svec remotes;
+    size_t next_remote;
+
+    struct reconnect *reconnect;
+    struct jsonrpc *rpc;
+    struct stream *stream;
+    struct pstream *pstream;
+    int last_error;
+    unsigned int seqno;
+    uint8_t dscp;
 };
 
 struct jsonrpc_msg *jsonrpc_create_request(const char *method,

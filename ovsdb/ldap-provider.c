@@ -375,6 +375,1073 @@ error:
     goto cleanup;
 }
 
+static LDAP_FUNCTION_TABLE_INIT nb_north_bound_init;
+static LDAP_FUNCTION_TABLE_INIT nb_connection_init;
+static LDAP_FUNCTION_TABLE_INIT nb_ssl_init;
+static LDAP_FUNCTION_TABLE_INIT nb_address_set_init;
+static LDAP_FUNCTION_TABLE_INIT nb_logical_router_init;
+static LDAP_FUNCTION_TABLE_INIT nb_logical_router_port_init;
+static LDAP_FUNCTION_TABLE_INIT nb_gateway_chassis_init;
+static LDAP_FUNCTION_TABLE_INIT nb_nat_init;
+static LDAP_FUNCTION_TABLE_INIT nb_logical_router_static_route_init;
+static LDAP_FUNCTION_TABLE_INIT nb_load_balancer_init;
+static LDAP_FUNCTION_TABLE_INIT nb_logical_switch_init;
+static LDAP_FUNCTION_TABLE_INIT nb_logical_switch_port_init;
+static LDAP_FUNCTION_TABLE_INIT nb_dhcp_options_init;
+static LDAP_FUNCTION_TABLE_INIT nb_qos_init;
+static LDAP_FUNCTION_TABLE_INIT nb_dns_config_init;
+static LDAP_FUNCTION_TABLE_INIT nb_acl_init;
+
+
+static FN_LDAP_OPERATION nb_acl_ldap_delete;
+static FN_LDAP_OPERATION nb_acl_ldap_insert;
+static FN_LDAP_OPERATION nb_acl_ldap_select;
+static FN_LDAP_OPERATION nb_acl_ldap_update;
+static FN_LDAP_OPERATION nb_address_set_ldap_delete;
+static FN_LDAP_OPERATION nb_address_set_ldap_insert;
+static FN_LDAP_OPERATION nb_address_set_ldap_select;
+static FN_LDAP_OPERATION nb_address_set_ldap_update;
+static FN_LDAP_OPERATION nb_connection_ldap_delete;
+static FN_LDAP_OPERATION nb_connection_ldap_insert;
+static FN_LDAP_OPERATION nb_connection_ldap_select;
+static FN_LDAP_OPERATION nb_connection_ldap_update;
+static FN_LDAP_OPERATION nb_dhcp_options_ldap_delete;
+static FN_LDAP_OPERATION nb_dhcp_options_ldap_insert;
+static FN_LDAP_OPERATION nb_dhcp_options_ldap_select;
+static FN_LDAP_OPERATION nb_dhcp_options_ldap_update;
+static FN_LDAP_OPERATION nb_dns_config_ldap_delete;
+static FN_LDAP_OPERATION nb_dns_config_ldap_insert;
+static FN_LDAP_OPERATION nb_dns_config_ldap_select;
+static FN_LDAP_OPERATION nb_dns_config_ldap_update;
+static FN_LDAP_OPERATION nb_gateway_chassis_ldap_delete;
+static FN_LDAP_OPERATION nb_gateway_chassis_ldap_insert;
+static FN_LDAP_OPERATION nb_gateway_chassis_ldap_select;
+static FN_LDAP_OPERATION nb_gateway_chassis_ldap_update;
+static FN_LDAP_OPERATION nb_load_balancer_ldap_delete;
+static FN_LDAP_OPERATION nb_load_balancer_ldap_insert;
+static FN_LDAP_OPERATION nb_load_balancer_ldap_select;
+static FN_LDAP_OPERATION nb_load_balancer_ldap_update;
+static FN_LDAP_OPERATION nb_logical_router_ldap_delete;
+static FN_LDAP_OPERATION nb_logical_router_ldap_insert;
+static FN_LDAP_OPERATION nb_logical_router_ldap_select;
+static FN_LDAP_OPERATION nb_logical_router_ldap_update;
+static FN_LDAP_OPERATION nb_logical_router_port_ldap_delete;
+static FN_LDAP_OPERATION nb_logical_router_port_ldap_insert;
+static FN_LDAP_OPERATION nb_logical_router_port_ldap_select;
+static FN_LDAP_OPERATION nb_logical_router_port_ldap_update;
+static FN_LDAP_OPERATION nb_logical_router_static_route_ldap_delete;
+static FN_LDAP_OPERATION nb_logical_router_static_route_ldap_insert;
+static FN_LDAP_OPERATION nb_logical_router_static_route_ldap_select;
+static FN_LDAP_OPERATION nb_logical_router_static_route_ldap_update;
+static FN_LDAP_OPERATION nb_logical_switch_ldap_delete;
+static FN_LDAP_OPERATION nb_logical_switch_ldap_insert;
+static FN_LDAP_OPERATION nb_logical_switch_ldap_select;
+static FN_LDAP_OPERATION nb_logical_switch_ldap_update;
+static FN_LDAP_OPERATION nb_logical_switch_port_ldap_delete;
+static FN_LDAP_OPERATION nb_logical_switch_port_ldap_insert;
+static FN_LDAP_OPERATION nb_logical_switch_port_ldap_select;
+static FN_LDAP_OPERATION nb_logical_switch_port_ldap_update;
+static FN_LDAP_OPERATION nb_nat_ldap_delete;
+static FN_LDAP_OPERATION nb_nat_ldap_insert;
+static FN_LDAP_OPERATION nb_nat_ldap_select;
+static FN_LDAP_OPERATION nb_nat_ldap_update;
+static FN_LDAP_OPERATION nb_north_bound_ldap_delete;
+static FN_LDAP_OPERATION nb_north_bound_ldap_insert;
+static FN_LDAP_OPERATION nb_north_bound_ldap_select;
+static FN_LDAP_OPERATION nb_north_bound_ldap_update;
+static FN_LDAP_OPERATION nb_qos_ldap_delete;
+static FN_LDAP_OPERATION nb_qos_ldap_insert;
+static FN_LDAP_OPERATION nb_qos_ldap_select;
+static FN_LDAP_OPERATION nb_qos_ldap_update;
+static FN_LDAP_OPERATION nb_ssl_ldap_delete;
+static FN_LDAP_OPERATION nb_ssl_ldap_insert;
+static FN_LDAP_OPERATION nb_ssl_ldap_select;
+static FN_LDAP_OPERATION nb_ssl_ldap_update;
+
+uint32_t
+get_obj_function_table_from_table(LDAP_FUNCTION_TABLE *, struct ovsdb_parser *);
+
+static FN_LDAP_OPERATION *
+lookup_ldap_operation(
+    LDAP_FUNCTION_TABLE *pldap_obj_fn_table,
+    const char *op_name, 
+    bool *read_only
+) {
+    struct ldap_operation {
+        const char *name;
+        bool read_only;
+        FN_LDAP_OPERATION *pfn_ldap_operation;
+    };
+
+    const struct ldap_operation operations[] = {
+        { "insert", false, pldap_obj_fn_table->pfn_ldap_insert },
+        { "select", true, pldap_obj_fn_table->pfn_ldap_select },
+        { "update", false, pldap_obj_fn_table->pfn_ldap_update },
+        { "delete", false, pldap_obj_fn_table->pfn_ldap_delete },
+    };
+
+    size_t i;
+    for (i = 0; i < ARRAY_SIZE(operations); i++) {
+        const struct ldap_operation *c = &operations[i];
+        if (!strcmp(c->name, op_name)) {
+            *read_only = c->read_only;
+            return c->pfn_ldap_operation;
+        }
+    }
+    return NULL;
+}
+
+LDAP_FUNCTION_TABLE
+nb_north_bound_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_north_bound_ldap_insert,
+        nb_north_bound_ldap_select,
+        nb_north_bound_ldap_delete,
+        nb_north_bound_ldap_update
+    };
+    VLOG_INFO("nb_north_bound_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_north_bound_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_north_bound_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_north_bound_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_north_bound_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_north_bound_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_north_bound_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_north_bound_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_north_bound_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_connection_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_connection_ldap_insert,
+        nb_connection_ldap_select,
+        nb_connection_ldap_delete,
+        nb_connection_ldap_update
+    };
+    VLOG_INFO("nb_connection_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_connection_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_connection_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_connection_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_connection_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_connection_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_connection_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_connection_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_connection_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_ssl_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_ssl_ldap_insert,
+        nb_ssl_ldap_select,
+        nb_ssl_ldap_delete,
+        nb_ssl_ldap_update
+    };
+    VLOG_INFO("nb_ssl_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_ssl_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_ssl_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_ssl_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_ssl_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_ssl_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_ssl_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_ssl_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_ssl_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_address_set_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_address_set_ldap_insert,
+        nb_address_set_ldap_select,
+        nb_address_set_ldap_delete,
+        nb_address_set_ldap_update
+    };
+    VLOG_INFO("nb_address_set_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_address_set_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_address_set_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_address_set_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_address_set_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_address_set_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_address_set_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_address_set_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_address_set_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_logical_router_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_logical_router_ldap_insert,
+        nb_logical_router_ldap_select,
+        nb_logical_router_ldap_delete,
+        nb_logical_router_ldap_update
+    };
+    VLOG_INFO("nb_logical_router_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_logical_router_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+
+    return error;
+}
+
+static uint32_t
+nb_logical_router_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_ldap_update called\n");
+
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_logical_router_port_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_logical_router_port_ldap_insert,
+        nb_logical_router_port_ldap_select,
+        nb_logical_router_port_ldap_delete,
+        nb_logical_router_port_ldap_update
+    };
+    VLOG_INFO("nb_logical_router_port_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_logical_router_port_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_port_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_port_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_port_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_port_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_port_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_port_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_port_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_gateway_chassis_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_gateway_chassis_ldap_insert,
+        nb_gateway_chassis_ldap_select,
+        nb_gateway_chassis_ldap_delete,
+        nb_gateway_chassis_ldap_update
+    };
+    VLOG_INFO("nb_gateway_chassis_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_gateway_chassis_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_gateway_chassis_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_gateway_chassis_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_gateway_chassis_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_gateway_chassis_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_gateway_chassis_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_gateway_chassis_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_gateway_chassis_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_nat_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_nat_ldap_insert,
+        nb_nat_ldap_select,
+        nb_nat_ldap_delete,
+        nb_nat_ldap_update
+    };
+    VLOG_INFO("nb_nat_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_nat_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_nat_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_nat_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_nat_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_nat_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_nat_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_nat_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_nat_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_logical_router_static_route_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_logical_router_static_route_ldap_insert,
+        nb_logical_router_static_route_ldap_select,
+        nb_logical_router_static_route_ldap_delete,
+        nb_logical_router_static_route_ldap_update
+    };
+    VLOG_INFO("nb_logical_router_static_route_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_logical_router_static_route_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_static_route_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_static_route_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_static_route_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_static_route_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_static_route_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_router_static_route_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_router_static_route_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_load_balancer_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_load_balancer_ldap_insert,
+        nb_load_balancer_ldap_select,
+        nb_load_balancer_ldap_delete,
+        nb_load_balancer_ldap_update
+    };
+    VLOG_INFO("nb_load_balancer_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_load_balancer_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_load_balancer_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_load_balancer_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_load_balancer_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_load_balancer_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_load_balancer_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_load_balancer_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_load_balancer_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_logical_switch_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_logical_switch_ldap_insert,
+        nb_logical_switch_ldap_select,
+        nb_logical_switch_ldap_delete,
+        nb_logical_switch_ldap_update
+    };
+    VLOG_INFO("nb_logical_switch_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_logical_switch_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_switch_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_switch_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_switch_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_logical_switch_port_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_logical_switch_port_ldap_insert,
+        nb_logical_switch_port_ldap_select,
+        nb_logical_switch_port_ldap_delete,
+        nb_logical_switch_port_ldap_update
+    };
+    VLOG_INFO("nb_logical_switch_port_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_logical_switch_port_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_port_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_switch_port_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_port_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_switch_port_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_port_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_logical_switch_port_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_logical_switch_port_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_dhcp_options_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_dhcp_options_ldap_insert,
+        nb_dhcp_options_ldap_select,
+        nb_dhcp_options_ldap_delete,
+        nb_dhcp_options_ldap_update
+    };
+    VLOG_INFO("nb_dhcp_options_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_dhcp_options_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dhcp_options_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_dhcp_options_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dhcp_options_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_dhcp_options_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dhcp_options_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_dhcp_options_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dhcp_options_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_qos_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_qos_ldap_insert,
+        nb_qos_ldap_select,
+        nb_qos_ldap_delete,
+        nb_qos_ldap_update
+    };
+    VLOG_INFO("nb_qos_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_qos_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_qos_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_qos_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_qos_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_qos_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_qos_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_qos_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_qos_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_dns_config_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_dns_config_ldap_insert,
+        nb_dns_config_ldap_select,
+        nb_dns_config_ldap_delete,
+        nb_dns_config_ldap_update
+    };
+    VLOG_INFO("nb_dns_config_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_dns_config_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dns_config_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_dns_config_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dns_config_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_dns_config_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dns_config_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_dns_config_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_dns_config_ldap_update called\n");
+    return error;
+}
+
+LDAP_FUNCTION_TABLE
+nb_acl_init(void) {
+    LDAP_FUNCTION_TABLE ldap_fn_table = {
+        nb_acl_ldap_insert,
+        nb_acl_ldap_select,
+        nb_acl_ldap_delete,
+        nb_acl_ldap_update
+    };
+    VLOG_INFO("nb_acl_init called\n");
+    return ldap_fn_table;
+}
+
+static uint32_t
+nb_acl_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_acl_ldap_insert called\n");
+    return error;
+}
+
+static uint32_t
+nb_acl_ldap_select(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_acl_ldap_select called\n");
+    return error;
+}
+
+static uint32_t
+nb_acl_ldap_delete(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_acl_ldap_delete called\n");
+    return error;
+}
+
+static uint32_t
+nb_acl_ldap_update(
+    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
+    struct ovsdb_parser *parser OVS_UNUSED,
+    struct json *result OVS_UNUSED
+) {
+    static uint32_t error = 0;
+    VLOG_INFO("nb_acl_ldap_update called\n");
+    return error;
+}
+
+uint32_t
+get_obj_function_table_from_table(
+    LDAP_FUNCTION_TABLE *pldap_obj_fn_table, 
+    struct ovsdb_parser *parser
+)
+{
+    const char *table_name;
+    const struct json *json;
+    uint32_t error = 0;
+    size_t i;
+
+    json = ovsdb_parser_member(parser, "table", OP_ID);
+    if (!json) {
+        error = ERROR_OVS_INVALID_PARAMETER;
+        goto error;
+    }
+    table_name = json_string(json);
+
+    struct dn_name_t {
+        const char *table_name;
+        LDAP_FUNCTION_TABLE (*dn_init)(void);
+    };
+
+    static const struct dn_name_t dn_names[] = {
+        {"NB_Global", nb_north_bound_init},
+        {"Connection", nb_connection_init},
+        {"SSL", nb_ssl_init},
+        {"Address_Set", nb_address_set_init},
+        {"Logical_Router", nb_logical_router_init},
+        {"Logical_Router_Port", nb_logical_router_port_init},
+        {"Gateway_Chassis", nb_gateway_chassis_init},
+        {"NAT", nb_nat_init},
+        {"Logical_Router_Static_Route", nb_logical_router_static_route_init},
+        {"Load_Balancer", nb_load_balancer_init},
+        {"Logical_Switch", nb_logical_switch_init},
+        {"Logical_Switch_Port", nb_logical_switch_port_init},
+        {"DHCP_Options", nb_dhcp_options_init},
+        {"QoS", nb_qos_init},
+        {"DNS", nb_dns_config_init},
+        {"ACL", nb_acl_init}
+    };
+
+    error = ERROR_OVS_INVALID_PARAMETER;
+    for (i = 0; i < ARRAY_SIZE(dn_names); i++) {
+        if (!strcmp(dn_names[i].table_name, table_name)) {
+            error = 0;
+            *pldap_obj_fn_table =  dn_names[i].dn_init();
+        }
+    }
+
+error:
+    return error;
+}
+
 uint32_t
 ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...)
 {
@@ -436,9 +1503,8 @@ db_provider_init(DB_FUNCTION_TABLE **ppLdapFnTable)
     pLdapFnTable->pfn_db_monitor_cancel = &ldap_monitor_cancel_intf;
 
     *ppLdapFnTable = pLdapFnTable;
-
+    
     return 0;
-
 }
 
 void
@@ -462,10 +1528,61 @@ ldap_execute_compose_intf(
     struct json **resultsp
 )
 {
-    return ovsdb_execute_compose(
+    size_t n_operations;
+    size_t i;
+    uint32_t error;
+    struct ovsdb_txn *txn = NULL;
+
+    txn = ovsdb_execute_compose(
         pContext->db, pContext->session, params, pContext->read_only, role, id,
         elapsed_msec, timeout_msec, durable, resultsp
     );
+
+    if (txn != NULL) {
+        n_operations = params->array.n - 1;
+        
+        for (i = 1; i <= n_operations; i++) {
+            struct json *operation = params->array.elems[i];
+            const struct json *op;
+            struct json *result;
+            LDAP_FUNCTION_TABLE ldap_obj_fn_table;
+            const char *op_name = NULL;
+            bool ro = false;
+            struct ovsdb_parser parser;
+
+            ovsdb_parser_init(&parser, operation,
+                              "ovsdb operation %"PRIuSIZE" or %"PRIuSIZE, i,
+                              n_operations);
+            op = ovsdb_parser_member(&parser, "op", OP_ID);
+            result = json_object_create();
+            if (op) {
+                op_name = json_string(op);
+                error = get_obj_function_table_from_table(&ldap_obj_fn_table, &parser);
+                if (error) {
+                    VLOG_INFO(
+                        "get_obj_function_table_from_table encountered an error %d\n", 
+                        error
+                    );
+                    continue;
+                }
+                FN_LDAP_OPERATION *pfn_ldap_operation = lookup_ldap_operation(
+                    &ldap_obj_fn_table,
+                    op_name,
+                    &ro
+                );
+                if (pfn_ldap_operation) {
+                    error = pfn_ldap_operation(pContext, &parser, result);
+                    if (error) {
+                        VLOG_INFO("pfn_ldap_operation encountered an error %d\n", error);
+                    }
+                } else {
+                    VLOG_INFO("No pfn_ldap_operation found for op:%s\n", op_name);
+                }
+            }
+        }
+    }
+
+    return txn;
 }
 
 struct ovsdb_txn_progress *

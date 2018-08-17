@@ -541,6 +541,10 @@ ovsdb_jsonrpc_session_run(struct ovsdb_jsonrpc_session *s)
 
         msg = jsonrpc_session_recv(s->js);
         if (msg) {
+            #ifdef JSON_RPC_DEBUG
+            VLOG_INFO("method: %s from: %s\n", msg->method, s->js->remotes.names[0]);
+            VLOG_INFO("\nparams:\n%s\n", json_to_string(msg->params, JSSF_PRETTY));
+            #endif
             if (msg->type == JSONRPC_REQUEST) {
                 ovsdb_jsonrpc_session_got_request(s, msg);
             } else if (msg->type == JSONRPC_NOTIFY) {

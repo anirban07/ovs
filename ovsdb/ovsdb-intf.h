@@ -10,6 +10,8 @@
 #ifndef OVSDB_INTF_H_
 #define OVSDB_INTF_H_
 
+#define JSON_RPC_DEBUG
+
 #include "openvswitch/json.h"
 
 enum ovsdb_monitor_version;

@@ -17,6 +17,7 @@
 #include "openvswitch/vlog.h"
 #include "jsonrpc-server.h"
 #include "monitor.h"
+#include "ovsdb-parser.h"
 
 #define OVS_SAFE_FREE_STRING(pStr) \
         if ((pStr)) { \
@@ -149,7 +150,6 @@ OvsAllocateStringPrintf(
     ...
 );
 
-
 /**
  * Allocates a contiguous block of memory matching the requested size.
  * @param size     The size of memory requested. This value must be greater
@@ -214,5 +214,22 @@ ldap_monitor_cond_change_intf(PDB_INTERFACE_CONTEXT_T pContext,
 struct jsonrpc_msg *
 ldap_monitor_cancel_intf(PDB_INTERFACE_CONTEXT_T pContext,
     struct json_array *params, struct json *id);
+
+/** Following functions are useful for implementing data operations on DNs */
+typedef uint32_t FN_LDAP_OPERATION (
+    PDB_INTERFACE_CONTEXT_T,
+    struct ovsdb_parser *,
+    struct json *
+);
+
+typedef struct __LDAP_FUNCTION_TABLE
+{
+    FN_LDAP_OPERATION *pfn_ldap_insert;
+    FN_LDAP_OPERATION *pfn_ldap_select;
+    FN_LDAP_OPERATION *pfn_ldap_delete;
+    FN_LDAP_OPERATION *pfn_ldap_update;
+} LDAP_FUNCTION_TABLE;
+
+typedef LDAP_FUNCTION_TABLE LDAP_FUNCTION_TABLE_INIT (void);
 
 #endif /* LDAP_PROVIDER_H */

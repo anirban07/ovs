@@ -20,6 +20,13 @@
 
 struct json;
 
+struct ovsdb_error {
+    const char *tag;            /* String for "error" member. */
+    char *details;              /* String for "details" member. */
+    char *syntax;               /* String for "syntax" member. */
+    int errno_;                 /* Unix errno value, 0 if none. */
+};
+
 struct ovsdb_error *ovsdb_error(const char *tag, const char *details, ...)
     OVS_PRINTF_FORMAT(2, 3)
     OVS_WARN_UNUSED_RESULT;

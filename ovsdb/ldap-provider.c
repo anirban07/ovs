@@ -881,17 +881,24 @@ error:
 static
 uint32_t
 LDAPMod_creater(
-    struct ovs_column *pOvsColumn,
-    struct ovsdb_datum *datum
+    const struct ovs_column *pOvsColumn,
+    struct ovsdb_datum *datum,
+    LDAPMod *pLDAPMod
 ) {
     uint32_t error = 0;
     char *pStr = NULL;
+    char *column_name = NULL;
     ovs_set_t *povs_set = NULL;
     ovs_map_t *povs_map = NULL;
 
     char **modv;
     error = OvsAllocateMemory((void **) &modv, 2 * sizeof(char *));
     BAIL_ON_ERROR(error)
+
+    OvsAllocateString(
+        &column_name,
+        pOvsColumn->ldap_column_name
+    );
 
     switch (pOvsColumn->column_type) {
         case OVS_COLUMN_UUID :
@@ -900,10 +907,10 @@ LDAPMod_creater(
                 xasprintf(UUID_FMT, UUID_ARGS(&datum->keys->uuid))
             );
             error = ovs_get_str_sequence(
-                pOvsColumn->pLDAPMod,
+                pLDAPMod,
                 modv,
                 0,
-                pOvsColumn->ldap_column_name,
+                column_name,
                 pStr
             );
             BAIL_ON_ERROR(error)
@@ -912,30 +919,30 @@ LDAPMod_creater(
             error = OvsAllocateString(&pStr, datum->keys->string);
             BAIL_ON_ERROR(error)
             error = ovs_get_str_sequence(
-                pOvsColumn->pLDAPMod,
+                pLDAPMod,
                 modv,
                 0,
-                pOvsColumn->ldap_column_name,
+                column_name,
                 pStr
             );
             BAIL_ON_ERROR(error)
             break;
         case OVS_COLUMN_BOOLEAN :
             error = ovs_get_bool_sequence(
-                pOvsColumn->pLDAPMod,
+                pLDAPMod,
                 modv,
                 0,
-                pOvsColumn->ldap_column_name,
+                column_name,
                 datum->keys->boolean
             );
             BAIL_ON_ERROR(error)
             break;
         case OVS_COLUMN_INTEGER :
             error = ovs_get_int_sequence(
-                pOvsColumn->pLDAPMod,
+                pLDAPMod,
                 modv,
                 0,
-                pOvsColumn->ldap_column_name,
+                column_name,
                 datum->keys->integer
             );
             BAIL_ON_ERROR(error)
@@ -948,10 +955,10 @@ LDAPMod_creater(
             );
             BAIL_ON_ERROR(error)
             error = ovs_get_set_sequence(
-                pOvsColumn->pLDAPMod,
+                pLDAPMod,
                 modv,
                 0,
-                pOvsColumn->ldap_column_name,
+                column_name,
                 povs_set,
                 datum->n
             );
@@ -965,15 +972,16 @@ LDAPMod_creater(
             );
             BAIL_ON_ERROR(error)
             error = ovs_get_map_sequence(
-                pOvsColumn->pLDAPMod,
+                pLDAPMod,
                 modv,
                 0,
-                pOvsColumn->ldap_column_name,
+                column_name,
                 povs_map,
                 datum->n
             );
             BAIL_ON_ERROR(error)
             break;
+        case OVS_COLUMN_DEFAULT :
         default :
             error = ERROR_OVS_INVALID_COLUMN_TYPE;
             goto error;
@@ -984,60 +992,44 @@ error:
     return error;
 }
 
-static uint32_t ldap_default_fill_columns(
-    struct ovs_column pOvsColumns[],
-    size_t num_columns
-) {
-    uint32_t error = 0;
-    size_t i;
-
-    for (i = 0; i < num_columns; i++) {
-        if (pOvsColumns[i].pLDAPMod->mod_type == 0) {
-            struct ovsdb_datum default_datum;
-            ovsdb_datum_init_default(&default_datum, pOvsColumns[i].pcolumn_ovsdb_type);
-            // Default string of OVSDB is "", LDAP needs "null"
-            if (pOvsColumns[i].column_type == OVS_COLUMN_STRING) {
-                OvsFreeMemory(default_datum.keys->string);
-                char *default_str = NULL;
-                OvsAllocateString(&default_str, LDAP_DEFAULT_STRING);
-                default_datum.keys->string = default_str;
-            } else if (pOvsColumns[i].column_type == OVS_COLUMN_UUID) {
-                uuid_generate(&default_datum.keys->uuid);
-            }
-            error = LDAPMod_creater(&pOvsColumns[i], &default_datum);
-            BAIL_ON_ERROR(error)
-
-            ovsdb_datum_destroy(&default_datum, pOvsColumns[i].pcolumn_ovsdb_type);
-        }
-    }
-error:
-    return error;
-}
-
 static uint32_t
 ldap_parse_row(
     const struct json *row_json,
-    struct ovs_column columns[],
-    size_t num_columns
+    const struct ovs_column_set *povs_column_set,
+    char *class_name,
+    LDAPMod ***pattrs
 ) {
-    uint32_t error = 0;
-    struct ovsdb_error *ovsdb_error = NULL;
+    size_t i;
     struct shash_node *node;
+    struct sset columns_from_json;
+    char **modv;
+    uint32_t error = 0;
+    size_t num_columns_found = 0;
+    struct ovsdb_error *ovsdb_error = NULL;
+    LDAPMod **attrs = NULL;
+
+    error = OvsAllocateMemory(
+        (void **) &attrs,
+        sizeof(*attrs) * (povs_column_set->n_columns + 2)
+    );
+    BAIL_ON_ERROR(error)
+
     if (row_json->type != JSON_OBJECT) {
         error = ERROR_OVS_JSON_SYNTAX_ERROR;
         BAIL_ON_ERROR(error);
     }
+
+    sset_init(&columns_from_json);
+
+    // Fill columns from json
+    const struct ovs_column *ovs_columns = povs_column_set->ovs_columns;
     SHASH_FOR_EACH (node, json_object(row_json)) {
         struct ovsdb_datum datum;
-        struct ovs_column *pOvsColumn = NULL;
         const char *column_name = node->name;
 
-        size_t i;
-        for (i = 0; i < num_columns; i++) {
-            if (!strcmp(columns[i].ovsdb_column_name, column_name)) {
-                pOvsColumn = &columns[i];
-            }
-        }
+        for (i = 0; i < povs_column_set->n_columns; i++) {
+            if (!strcmp(ovs_columns[i].ovsdb_column_name, column_name)) {
+                const struct ovs_column *pOvsColumn = &ovs_columns[i];
         ovsdb_error = ovsdb_datum_from_json(
             &datum,
             pOvsColumn->pcolumn_ovsdb_type,
@@ -1048,47 +1040,94 @@ ldap_parse_row(
             error = ovsdb_error->errno_;
             BAIL_ON_ERROR(error);
         }
-
-        error = LDAPMod_creater(pOvsColumn, &datum);
+                LDAPMod *pLDAPMod = NULL;
+                OvsAllocateMemory(
+                    (void **) &pLDAPMod,
+                    sizeof(*pLDAPMod)
+                );
+                error = LDAPMod_creater(pOvsColumn, &datum, pLDAPMod);
         BAIL_ON_ERROR(error)
         ovsdb_datum_destroy(&datum, pOvsColumn->pcolumn_ovsdb_type);
+                attrs[num_columns_found++] = pLDAPMod;
+                sset_add(&columns_from_json, column_name);
     }
-    error = ldap_default_fill_columns(columns, num_columns);
+}
+    }
+
+    // Fill default columns
+    for (i = 0; i < povs_column_set->n_columns; i++) {
+        const char *column_name = ovs_columns[i].ovsdb_column_name;
+        if (!sset_contains(&columns_from_json, column_name)) {
+            const struct ovs_column *pOvsColumn = &ovs_columns[i];
+            struct ovsdb_datum default_datum;
+            ovsdb_datum_init_default(&default_datum, pOvsColumn->pcolumn_ovsdb_type);
+            // Default string of OVSDB is "", LDAP needs "null"
+            if (pOvsColumn->column_type == OVS_COLUMN_STRING) {
+                OvsFreeMemory(default_datum.keys->string);
+                char *default_str = NULL;
+                OvsAllocateString(&default_str, LDAP_DEFAULT_STRING);
+                default_datum.keys->string = default_str;
+            } else if (pOvsColumn->column_type == OVS_COLUMN_UUID) {
+                uuid_generate(&default_datum.keys->uuid);
+    }
+            LDAPMod *pLDAPMod = NULL;
+            OvsAllocateMemory(
+                (void **) &pLDAPMod,
+                sizeof(*pLDAPMod)
+            );
+            error = LDAPMod_creater(pOvsColumn, &default_datum, pLDAPMod);
+            BAIL_ON_ERROR(error)
+            ovsdb_datum_destroy(&default_datum, pOvsColumn->pcolumn_ovsdb_type);
+            attrs[num_columns_found++] = pLDAPMod;
+}
+    }
+
+    // Allocate Object Class LDAPMod struct
+    error = OvsAllocateMemory((void **) &modv, 3 * sizeof(char *));
+    BAIL_ON_ERROR(error);
+
+    char *class_name_copy = NULL;
+    char *ldap_top = NULL;
+    char *ldap_object_class = NULL;
+    OvsAllocateString(&class_name_copy, class_name);
+    OvsAllocateString(&ldap_top, LDAP_TOP);
+    OvsAllocateString(&ldap_object_class, LDAP_OBJECT_CLASS);
+
+    modv[0] = class_name_copy;
+    modv[1] = ldap_top;
+
+    LDAPMod *pObjectClassLDAPMod = NULL;
+    OvsAllocateMemory(
+        (void **) &pObjectClassLDAPMod,
+        sizeof(*pObjectClassLDAPMod)
+    );
+
+    pObjectClassLDAPMod->mod_op = LDAP_MOD_ADD;
+    pObjectClassLDAPMod->mod_type = ldap_object_class;
+    pObjectClassLDAPMod->mod_vals.modv_strvals = modv;
+    attrs[povs_column_set->n_columns] = pObjectClassLDAPMod;
 
 error:
     ovsdb_error_destroy(ovsdb_error);
+    sset_destroy(&columns_from_json);
+    *pattrs = attrs;
     return error;
 }
 
 static void attrs_cleanup(LDAPMod *attrs[], size_t num_columns) {
-    OvsFreeMemory(attrs[0]->mod_vals.modv_strvals);
     size_t i;
-    for (i = 1; i <= num_columns; i++) {
-        OvsFreeMemory(attrs[i]->mod_vals.modv_strvals[0]);
-        OvsFreeMemory(attrs[i]->mod_vals.modv_strvals);
+    if (attrs) {
+        for (i = 0; i < num_columns + 1; i++) {
+            if (attrs[i]) {
+                OvsFreeMemory(attrs[i]->mod_vals.modv_strvals[0]);
+                if (strcmp(LDAP_OBJECT_CLASS, attrs[i]->mod_type) == 0) {
+                    OvsFreeMemory(attrs[i]->mod_vals.modv_strvals[1]);
+                    OvsFreeMemory(attrs[i]->mod_type);
+                }
+                OvsFreeMemory(attrs[i]->mod_vals.modv_strvals);
+            }
+        }
     }
-}
-
-static uint32_t ldap_object_class_helper(
-    char *class_name,
-    char *ldap_top,
-    LDAPMod *pLDAPMod
-) {
-    uint32_t error = 0;
-    char **modv;
-
-    error = OvsAllocateMemory((void **) &modv, 3 * sizeof(char *));
-    BAIL_ON_ERROR(error);
-
-    modv[0] = class_name;
-    modv[1] = ldap_top;
-
-    pLDAPMod->mod_op = LDAP_MOD_ADD;
-    pLDAPMod->mod_type = LDAP_OBJECT_CLASS;
-    pLDAPMod->mod_values = modv;
-
-error:
-    return error;
 }
 
 static LDAP_FUNCTION_TABLE_INIT nb_north_bound_init;
@@ -1174,6 +1213,23 @@ static FN_LDAP_OPERATION nb_ssl_ldap_insert;
 static FN_LDAP_OPERATION nb_ssl_ldap_select;
 static FN_LDAP_OPERATION nb_ssl_ldap_update;
 
+static FN_LDAP_GET_OVS_COLUMN_SET nb_north_bound_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_connection_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_ssl_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_address_set_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_logical_router_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_logical_router_port_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_gateway_chassis_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_nat_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_logical_router_static_route_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_load_balancer_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_logical_switch_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_logical_switch_port_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_dhcp_options_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_qos_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_dns_config_ldap_get_column_set;
+static FN_LDAP_GET_OVS_COLUMN_SET nb_acl_ldap_get_column_set;
+
 uint32_t
 get_obj_function_table_from_table(LDAP_FUNCTION_TABLE *, struct ovsdb_parser *);
 
@@ -1213,54 +1269,28 @@ nb_north_bound_init(void) {
         nb_north_bound_ldap_insert,
         nb_north_bound_ldap_select,
         nb_north_bound_ldap_delete,
-        nb_north_bound_ldap_update
+        nb_north_bound_ldap_update,
+        nb_north_bound_ldap_get_column_set
     };
     VLOG_INFO("nb_north_bound_init called\n");
     return ldap_fn_table;
 }
 
-static uint32_t
-nb_north_bound_ldap_insert(
-    PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
-    struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
-) {
-    VLOG_INFO("nb_north_bound_ldap_insert called\n");
 
+static uint32_t
+nb_ldap_insert_helper(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb_parser *parser,
+    struct json *result,
+    const struct ovs_column_set *povs_column_set,
+    char *class_name
+) {
+        size_t i;
     static uint32_t error = 0;
     const struct json *row_json;
     struct ovsdb_error *ovsdb_error = NULL;
 
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod ovsHVSequence = { 0 };
-    LDAPMod ovsNBSequence = { 0 };
-    LDAPMod ovsSBSequence = { 0 };
-    LDAPMod connSequence = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod sslConfigSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &ovsHVSequence,
-        &ovsNBSequence,
-        &ovsSBSequence,
-        &connSequence,
-        &externalIdsSeq,
-        &sslConfigSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_HV_SEQUENCE, OVS_COLUMN_INTEGER, &ovsHVSequence, OVSDB_HV_SEQUENCE, &ovsdb_type_integer},
-        {OVS_NB_SEQUENCE, OVS_COLUMN_INTEGER, &ovsNBSequence, OVSDB_NB_SEQUENCE, &ovsdb_type_integer},
-        {OVS_SB_SEQUENCE, OVS_COLUMN_INTEGER, &ovsSBSequence, OVSDB_SB_SEQUENCE, &ovsdb_type_integer},
-        {OVS_CONNECTION_SET, OVS_COLUMN_SET, &connSequence, OVSDB_CONNECTION_SET, &ovsdb_type_string_set},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-        {OVS_SSL_CONFIG, OVS_COLUMN_STRING, &sslConfigSeq, OVSDB_SSL_CONFIG, &ovsdb_type_string},
-    };
+    LDAPMod **attrs = NULL;
 
     row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
     ovsdb_error = ovsdb_parser_get_error(parser);
@@ -1268,17 +1298,21 @@ nb_north_bound_ldap_insert(
         error = ovsdb_error->errno_;
         BAIL_ON_ERROR(error)
     }
-    error = ldap_parse_row(row_json, columns, NB_GLOBAL_COL_COUNT);
+
+    error = ldap_parse_row(
+        row_json,
+        povs_column_set,
+        class_name,
+        &attrs
+    );
     BAIL_ON_ERROR(error);
 
-    error = ldap_object_class_helper(
-        NB_GLOBAL_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-
+    char *uuid = NULL;
+    for (i = 0; i <= povs_column_set->n_columns; i++) {
+        if (strcmp(LDAP_CN, attrs[i]->mod_type) == 0) {
+            uuid = attrs[i]->mod_vals.modv_strvals[0];
+        }
+    }
     char *pDn = NULL;
     GetDSERootAttribute(
         pContext->ldap_conn->pLd,
@@ -1289,8 +1323,8 @@ nb_north_bound_ldap_insert(
         pContext->ldap_conn,
         attrs,
         pDn,
-        NB_GLOBAL_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
+        class_name,
+        uuid
     );
     BAIL_ON_ERROR(error);
 
@@ -1301,24 +1335,94 @@ nb_north_bound_ldap_insert(
             wrap_json(
                 "uuid",
                 json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
+                    uuid
                 )
             )
         );
     }
 
 error:
-    attrs_cleanup(attrs, NB_GLOBAL_COL_COUNT);
+    attrs_cleanup(attrs, povs_column_set->n_columns);
     ovsdb_error_destroy(ovsdb_error);
 
     return error;
+
+}
+
+static
+struct ovs_column_set
+nb_north_bound_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_GLOBAL_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_hv_sequence = NULL;
+    char *ovs_nb_sequence = NULL;
+    char *ovs_sb_sequence = NULL;
+    char *ovs_connection_set = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovs_ssl_config = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_hv_sequence = NULL;
+    char *ovsdb_nb_sequence = NULL;
+    char *ovsdb_sb_sequence = NULL;
+    char *ovsdb_connection_set = NULL;
+    char *ovsdb_external_ids = NULL;
+    char *ovsdb_ssl_config = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_hv_sequence, OVS_HV_SEQUENCE);
+    OvsAllocateString(&ovs_nb_sequence, OVS_NB_SEQUENCE);
+    OvsAllocateString(&ovs_sb_sequence, OVS_SB_SEQUENCE);
+    OvsAllocateString(&ovs_connection_set, OVS_CONNECTION_SET);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovs_ssl_config, OVS_SSL_CONFIG);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_hv_sequence, OVSDB_HV_SEQUENCE);
+    OvsAllocateString(&ovsdb_nb_sequence, OVSDB_NB_SEQUENCE);
+    OvsAllocateString(&ovsdb_sb_sequence, OVSDB_SB_SEQUENCE);
+    OvsAllocateString(&ovsdb_connection_set, OVSDB_CONNECTION_SET);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_ssl_config, OVSDB_SSL_CONFIG);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_hv_sequence, OVS_COLUMN_INTEGER, ovsdb_hv_sequence, &ovsdb_type_integer},
+        {ovs_nb_sequence, OVS_COLUMN_INTEGER, ovsdb_nb_sequence, &ovsdb_type_integer},
+        {ovs_sb_sequence, OVS_COLUMN_INTEGER, ovsdb_sb_sequence, &ovsdb_type_integer},
+        {ovs_connection_set, OVS_COLUMN_SET, ovsdb_connection_set, &ovsdb_type_string_set},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+        {ovs_ssl_config, OVS_COLUMN_STRING, ovsdb_ssl_config, &ovsdb_type_string},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_GLOBAL_COL_COUNT};
+    return ovs_column_set;
+}
+
+static uint32_t
+nb_north_bound_ldap_insert(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb_parser *parser,
+    struct json *result,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
+) {
+    VLOG_INFO("nb_north_bound_ldap_insert called\n");
+
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_GLOBAL_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
 nb_north_bound_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1330,7 +1434,8 @@ static uint32_t
 nb_north_bound_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1342,7 +1447,8 @@ static uint32_t
 nb_north_bound_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1356,113 +1462,92 @@ nb_connection_init(void) {
         nb_connection_ldap_insert,
         nb_connection_ldap_select,
         nb_connection_ldap_delete,
-        nb_connection_ldap_update
+        nb_connection_ldap_update,
+        nb_connection_ldap_get_column_set
     };
     VLOG_INFO("nb_connection_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_connection_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_CONN_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_connection_target = NULL;
+    char *ovs_conn_is_connected = NULL;
+    char *ovs_max_back_off = NULL;
+    char *ovs_inactivity_probe = NULL;
+    char *ovs_status = NULL;
+    char *ovs_configs = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_connection_target = NULL;
+    char *ovsdb_conn_is_connected = NULL;
+    char *ovsdb_max_back_off = NULL;
+    char *ovsdb_inactivity_probe = NULL;
+    char *ovsdb_status = NULL;
+    char *ovsdb_configs = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_connection_target, OVS_CONNECTION_TARGET);
+    OvsAllocateString(&ovs_conn_is_connected, OVS_CONN_IS_CONNECTED);
+    OvsAllocateString(&ovs_max_back_off, OVS_MAX_BACK_OFF);
+    OvsAllocateString(&ovs_inactivity_probe, OVS_INACTIVITY_PROBE);
+    OvsAllocateString(&ovs_status, OVS_STATUS);
+    OvsAllocateString(&ovs_configs, OVS_CONFIGS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_connection_target, OVSDB_CONNECTION_TARGET);
+    OvsAllocateString(&ovsdb_conn_is_connected, OVSDB_CONN_IS_CONNECTED);
+    OvsAllocateString(&ovsdb_max_back_off, OVSDB_MAX_BACK_OFF);
+    OvsAllocateString(&ovsdb_inactivity_probe, OVSDB_INACTIVITY_PROBE);
+    OvsAllocateString(&ovsdb_status, OVSDB_STATUS);
+    OvsAllocateString(&ovsdb_configs, OVSDB_CONFIGS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_connection_target, OVS_COLUMN_STRING, ovsdb_connection_target, &ovsdb_type_string},
+        {ovs_conn_is_connected, OVS_COLUMN_BOOLEAN, ovsdb_conn_is_connected, &ovsdb_type_boolean},
+        {ovs_max_back_off, OVS_COLUMN_INTEGER, ovsdb_max_back_off, &ovsdb_type_integer},
+        {ovs_inactivity_probe, OVS_COLUMN_INTEGER, ovsdb_inactivity_probe, &ovsdb_type_integer},
+        {ovs_status, OVS_COLUMN_MAP, ovsdb_status, &ovsdb_type_string_string_map},
+        {ovs_configs, OVS_COLUMN_MAP, ovsdb_configs, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_CONN_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_connection_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     VLOG_INFO("nb_connection_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod targetSequence = { 0 };
-    LDAPMod isConnectedSequence = { 0 };
-    LDAPMod maxBackOffSeq = { 0 };
-    LDAPMod inactivitySeq = { 0 };
-    LDAPMod statusSeq = { 0 };
-    LDAPMod configSetSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &targetSequence,
-        &isConnectedSequence,
-        &maxBackOffSeq,
-        &inactivitySeq,
-        &statusSeq,
-        &configSetSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_CONNECTION_TARGET, OVS_COLUMN_STRING, &targetSequence, OVSDB_CONNECTION_TARGET, &ovsdb_type_string},
-        {OVS_CONN_IS_CONNECTED, OVS_COLUMN_BOOLEAN, &isConnectedSequence, OVSDB_CONN_IS_CONNECTED, &ovsdb_type_boolean},
-        {OVS_MAX_BACK_OFF, OVS_COLUMN_INTEGER, &maxBackOffSeq, OVSDB_MAX_BACK_OFF, &ovsdb_type_integer},
-        {OVS_INACTIVITY_PROBE, OVS_COLUMN_INTEGER, &inactivitySeq, OVSDB_INACTIVITY_PROBE, &ovsdb_type_integer},
-        {OVS_STATUS, OVS_COLUMN_MAP, &statusSeq, OVSDB_STATUS, &ovsdb_type_string_string_map},
-        {OVS_CONFIGS, OVS_COLUMN_MAP, &configSetSeq, OVSDB_CONFIGS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_CONN_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_CONN_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_CONN_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_CONN_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_CONN_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_connection_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1474,7 +1559,8 @@ static uint32_t
 nb_connection_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1486,7 +1572,8 @@ static uint32_t
 nb_connection_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1500,114 +1587,92 @@ nb_ssl_init(void) {
         nb_ssl_ldap_insert,
         nb_ssl_ldap_select,
         nb_ssl_ldap_delete,
-        nb_ssl_ldap_update
+        nb_ssl_ldap_update,
+        nb_ssl_ldap_get_column_set
     };
     VLOG_INFO("nb_ssl_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_ssl_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_SSL_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_ssl_private_key = NULL;
+    char *ovs_ssl_cert = NULL;
+    char *ovs_ssl_ca_cert = NULL;
+    char *ovs_ssl_bootstrap_ca_cert = NULL;
+    char *ovs_ssl_protocols = NULL;
+    char *ovs_ssl_ciphers = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_ssl_private_key = NULL;
+    char *ovsdb_ssl_cert = NULL;
+    char *ovsdb_ssl_ca_cert = NULL;
+    char *ovsdb_ssl_bootstrap_ca_cert = NULL;
+    char *ovsdb_ssl_protocols = NULL;
+    char *ovsdb_ssl_ciphers = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_ssl_private_key, OVS_SSL_PRIVATE_KEY);
+    OvsAllocateString(&ovs_ssl_cert, OVS_SSL_CERT);
+    OvsAllocateString(&ovs_ssl_ca_cert, OVS_SSL_CA_CERT);
+    OvsAllocateString(&ovs_ssl_bootstrap_ca_cert, OVS_SSL_BOOTSTRAP_CA_CERT);
+    OvsAllocateString(&ovs_ssl_protocols, OVS_SSL_PROTOCOLS);
+    OvsAllocateString(&ovs_ssl_ciphers, OVS_SSL_CIPHERS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_ssl_private_key, OVSDB_SSL_PRIVATE_KEY);
+    OvsAllocateString(&ovsdb_ssl_cert, OVSDB_SSL_CERT);
+    OvsAllocateString(&ovsdb_ssl_ca_cert, OVSDB_SSL_CA_CERT);
+    OvsAllocateString(&ovsdb_ssl_bootstrap_ca_cert, OVSDB_SSL_BOOTSTRAP_CA_CERT);
+    OvsAllocateString(&ovsdb_ssl_protocols, OVSDB_SSL_PROTOCOLS);
+    OvsAllocateString(&ovsdb_ssl_ciphers, OVSDB_SSL_CIPHERS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_ssl_private_key, OVS_COLUMN_STRING, ovsdb_ssl_private_key, &ovsdb_type_string},
+        {ovs_ssl_cert, OVS_COLUMN_STRING, ovsdb_ssl_cert, &ovsdb_type_string},
+        {ovs_ssl_ca_cert, OVS_COLUMN_STRING, ovsdb_ssl_ca_cert, &ovsdb_type_string},
+        {ovs_ssl_bootstrap_ca_cert, OVS_COLUMN_BOOLEAN, ovsdb_ssl_bootstrap_ca_cert, &ovsdb_type_boolean},
+        {ovs_ssl_protocols, OVS_COLUMN_STRING, ovsdb_ssl_protocols, &ovsdb_type_string},
+        {ovs_ssl_ciphers, OVS_COLUMN_STRING, ovsdb_ssl_ciphers, &ovsdb_type_string},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_SSL_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_ssl_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     VLOG_INFO("nb_ssl_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod ovsPrivateKey = { 0 };
-    LDAPMod ovsCertificate = { 0 };
-    LDAPMod ovsCACertificate = { 0 };
-    LDAPMod ovsBootstrapCACertificate = { 0 };
-    LDAPMod ovsSSLProtocols = { 0 };
-    LDAPMod ovsSSLCipers = { 0 };
-    LDAPMod ovsExternalIds = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &ovsPrivateKey,
-        &ovsCertificate,
-        &ovsCACertificate,
-        &ovsBootstrapCACertificate,
-        &ovsSSLProtocols,
-        &ovsSSLCipers,
-        &ovsExternalIds,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_SSL_PRIVATE_KEY, OVS_COLUMN_STRING, &ovsPrivateKey, OVSDB_SSL_PRIVATE_KEY, &ovsdb_type_string},
-        {OVS_SSL_CERT, OVS_COLUMN_STRING, &ovsCertificate, OVSDB_SSL_CERT, &ovsdb_type_string},
-        {OVS_SSL_CA_CERT, OVS_COLUMN_STRING, &ovsCACertificate, OVSDB_SSL_CA_CERT, &ovsdb_type_string},
-        {OVS_SSL_BOOTSTRAP_CA_CERT, OVS_COLUMN_BOOLEAN, &ovsBootstrapCACertificate, OVSDB_SSL_BOOTSTRAP_CA_CERT, &ovsdb_type_boolean},
-        {OVS_SSL_PROTOCOLS, OVS_COLUMN_STRING, &ovsSSLProtocols, OVSDB_SSL_PROTOCOLS, &ovsdb_type_string},
-        {OVS_SSL_CIPHERS, OVS_COLUMN_STRING, &ovsSSLCipers, OVSDB_SSL_CIPHERS, &ovsdb_type_string},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &ovsExternalIds, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_SSL_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_SSL_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_SSL_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_SSL_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_SSL_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-    VLOG_INFO("logical rt insert returned error: %d\n", error);
-    return error;
-}
 
 static uint32_t
 nb_ssl_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1619,7 +1684,8 @@ static uint32_t
 nb_ssl_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1631,7 +1697,8 @@ static uint32_t
 nb_ssl_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1645,102 +1712,72 @@ nb_address_set_init(void) {
         nb_address_set_ldap_insert,
         nb_address_set_ldap_select,
         nb_address_set_ldap_delete,
-        nb_address_set_ldap_update
+        nb_address_set_ldap_update,
+        nb_address_set_ldap_get_column_set
     };
     VLOG_INFO("nb_address_set_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_address_set_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_ADDRESS_SET_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_addresses = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovs_name = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_addresses = NULL;
+    char *ovsdb_external_ids = NULL;
+    char *ovsdb_name = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_addresses, OVS_ADDRESSES);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_addresses, OVSDB_ADDRESSES);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_addresses, OVS_COLUMN_SET, ovsdb_addresses, &ovsdb_type_string_set},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string}
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_ADDRESS_SET_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_address_set_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     VLOG_INFO("nb_address_set_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod addressSeq = { 0 };
-    LDAPMod nameSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &externalIdsSeq,
-        &addressSeq,
-        &nameSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_ADDRESSES, OVS_COLUMN_SET, &addressSeq, OVSDB_ADDRESSES, &ovsdb_type_string_set},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string}
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_ADDRESS_SET_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_ADDRESS_SET_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_ADDRESS_SET_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_ADDRESS_SET_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_ADDRESS_SET_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_address_set_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1752,7 +1789,8 @@ static uint32_t
 nb_address_set_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1764,7 +1802,8 @@ static uint32_t
 nb_address_set_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1778,115 +1817,98 @@ nb_logical_router_init(void) {
         nb_logical_router_ldap_insert,
         nb_logical_router_ldap_select,
         nb_logical_router_ldap_delete,
-        nb_logical_router_ldap_update
+        nb_logical_router_ldap_update,
+        nb_logical_router_ldap_get_column_set
     };
     VLOG_INFO("nb_logical_router_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_logical_router_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_LOGICAL_RT_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_is_enabled = NULL;
+    char *ovs_name = NULL;
+    char *ovs_port_set = NULL;
+    char *ovs_static_routes_set = NULL;
+    char *ovs_nat = NULL;
+    char *ovs_lb_set = NULL;
+    char *ovs_options = NULL;
+    char *ovs_external_ids = NULL;
+
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_is_enabled = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_port_set = NULL;
+    char *ovsdb_static_routes_set = NULL;
+    char *ovsdb_nat = NULL;
+    char *ovsdb_lb_set = NULL;
+    char *ovsdb_options = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_is_enabled, OVS_IS_ENABLED);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_port_set, OVS_PORT_SET);
+    OvsAllocateString(&ovs_static_routes_set, OVS_STATIC_ROUTES_SET);
+    OvsAllocateString(&ovs_nat, OVS_NAT);
+    OvsAllocateString(&ovs_lb_set, OVS_LB_SET);
+    OvsAllocateString(&ovs_options, OVS_OPTIONS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_is_enabled, OVSDB_IS_ENABLED);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_port_set, OVSDB_PORT_SET);
+    OvsAllocateString(&ovsdb_static_routes_set, OVSDB_STATIC_ROUTES_SET);
+    OvsAllocateString(&ovsdb_nat, OVSDB_NAT);
+    OvsAllocateString(&ovsdb_lb_set, OVSDB_LB_SET);
+    OvsAllocateString(&ovsdb_options, OVSDB_OPTIONS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_is_enabled, OVS_COLUMN_BOOLEAN, ovsdb_is_enabled, &ovsdb_type_boolean},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_port_set, OVS_COLUMN_SET, ovsdb_port_set, &ovsdb_type_string_set},
+        {ovs_static_routes_set, OVS_COLUMN_SET, ovsdb_static_routes_set, &ovsdb_type_string_set},
+        {ovs_nat, OVS_COLUMN_STRING, ovsdb_nat, &ovsdb_type_string},
+        {ovs_lb_set, OVS_COLUMN_SET, ovsdb_lb_set, &ovsdb_type_string_set},
+        {ovs_options, OVS_COLUMN_MAP, ovsdb_options, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_LOGICAL_RT_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_logical_router_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     VLOG_INFO("nb_logical_router_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod enabledSeq = { 0 };
-    LDAPMod nameSeq = { 0 };
-    LDAPMod portSeq = { 0 };
-    LDAPMod staticRouteSeq = { 0 };
-    LDAPMod natSeq = { 0 };
-    LDAPMod lbSeq = { 0 };
-    LDAPMod optionsSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &enabledSeq,
-        &nameSeq,
-        &portSeq,
-        &staticRouteSeq,
-        &natSeq,
-        &lbSeq,
-        &optionsSeq,
-        &externalIdsSeq,
-        NULL
-    };
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_IS_ENABLED, OVS_COLUMN_BOOLEAN, &enabledSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_boolean},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_PORT_SET, OVS_COLUMN_SET, &portSeq, OVSDB_PORT_SET, &ovsdb_type_string_set},
-        {OVS_STATIC_ROUTES_SET, OVS_COLUMN_SET, &staticRouteSeq, OVSDB_STATIC_ROUTES_SET, &ovsdb_type_string_set},
-        {OVS_NAT, OVS_COLUMN_STRING, &natSeq, OVSDB_NAT, &ovsdb_type_string},
-        {OVS_LB_SET, OVS_COLUMN_SET, &lbSeq, OVSDB_LB_SET, &ovsdb_type_string_set},
-        {OVS_OPTIONS, OVS_COLUMN_MAP, &optionsSeq, OVSDB_OPTIONS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_LOGICAL_RT_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_LOGICAL_RT_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LOGICAL_RT_OBJ_CLASS_NAME
     );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_LOGICAL_RT_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
-            result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
-        );
-    }
-
-error:
-    attrs_cleanup(attrs, NB_LOGICAL_RT_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
 }
 
 static uint32_t
 nb_logical_router_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1898,7 +1920,8 @@ static uint32_t
 nb_logical_router_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -1909,7 +1932,8 @@ static uint32_t
 nb_logical_router_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     VLOG_INFO("nb_logical_router_ldap_update called\n");
@@ -1923,115 +1947,97 @@ nb_logical_router_port_init(void) {
         nb_logical_router_port_ldap_insert,
         nb_logical_router_port_ldap_select,
         nb_logical_router_port_ldap_delete,
-        nb_logical_router_port_ldap_update
+        nb_logical_router_port_ldap_update,
+        nb_logical_router_port_ldap_get_column_set
     };
     VLOG_INFO("nb_logical_router_port_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_logical_router_port_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_LOGICAL_RT_PORT_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_name = NULL;
+    char *ovs_lr_mac = NULL;
+    char *ovs_is_enabled = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovs_gw_chassis_set = NULL;
+    char *ovs_networks = NULL;
+    char *ovs_options = NULL;
+    char *ovs_lr_peer = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_lr_mac = NULL;
+    char *ovsdb_is_enabled = NULL;
+    char *ovsdb_external_ids = NULL;
+    char *ovsdb_gw_chassis_set = NULL;
+    char *ovsdb_networks = NULL;
+    char *ovsdb_options = NULL;
+    char *ovsdb_lr_peer = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_lr_mac, OVS_LR_MAC);
+    OvsAllocateString(&ovs_is_enabled, OVS_IS_ENABLED);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovs_gw_chassis_set, OVS_GW_CHASSIS_SET);
+    OvsAllocateString(&ovs_networks, OVS_NETWORKS);
+    OvsAllocateString(&ovs_options, OVS_OPTIONS);
+    OvsAllocateString(&ovs_lr_peer, OVS_LR_PEER);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_lr_mac, OVSDB_LR_MAC);
+    OvsAllocateString(&ovsdb_is_enabled, OVSDB_IS_ENABLED);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_gw_chassis_set, OVSDB_GW_CHASSIS_SET);
+    OvsAllocateString(&ovsdb_networks, OVSDB_NETWORKS);
+    OvsAllocateString(&ovsdb_options, OVSDB_OPTIONS);
+    OvsAllocateString(&ovsdb_lr_peer, OVSDB_LR_PEER);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_lr_mac, OVS_COLUMN_STRING, ovsdb_lr_mac, &ovsdb_type_string},
+        {ovs_is_enabled, OVS_COLUMN_BOOLEAN, ovsdb_is_enabled, &ovsdb_type_boolean},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+        {ovs_gw_chassis_set, OVS_COLUMN_SET, ovsdb_gw_chassis_set, &ovsdb_type_string_set},
+        {ovs_networks, OVS_COLUMN_STRING, ovsdb_networks, &ovsdb_type_string},
+        {ovs_options, OVS_COLUMN_MAP, ovsdb_options, &ovsdb_type_string_set},
+        {ovs_lr_peer, OVS_COLUMN_STRING, ovsdb_lr_peer, &ovsdb_type_string},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_LOGICAL_RT_PORT_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_logical_router_port_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_logical_router_port_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod nameSeq = { 0 };
-    LDAPMod macSeq = { 0 };
-    LDAPMod enabledSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod gwChassisSeq = { 0 };
-    LDAPMod networkSeq = { 0 };
-    LDAPMod optionsSeq = { 0 };
-    LDAPMod peerSeq = { 0 };
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &nameSeq,
-        &macSeq,
-        &enabledSeq,
-        &externalIdsSeq,
-        &gwChassisSeq,
-        &networkSeq,
-        &optionsSeq,
-        &peerSeq,
-        NULL
-    };
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_LR_MAC, OVS_COLUMN_STRING, &macSeq, OVSDB_LR_MAC, &ovsdb_type_string},
-        {OVS_IS_ENABLED, OVS_COLUMN_BOOLEAN, &enabledSeq, OVSDB_IS_ENABLED, &ovsdb_type_boolean},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-        {OVS_GW_CHASSIS_SET, OVS_COLUMN_SET, &gwChassisSeq, OVSDB_GW_CHASSIS_SET, &ovsdb_type_string_set},
-        {OVS_NETWORKS, OVS_COLUMN_STRING, &networkSeq, OVSDB_NETWORKS, &ovsdb_type_string},
-        {OVS_OPTIONS, OVS_COLUMN_MAP, &optionsSeq, OVSDB_OPTIONS, &ovsdb_type_string_set},
-        {OVS_LR_PEER, OVS_COLUMN_STRING, &peerSeq, OVSDB_LR_PEER, &ovsdb_type_string},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_LOGICAL_RT_PORT_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_LOGICAL_RT_PORT_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_LOGICAL_RT_PORT_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_LOGICAL_RT_PORT_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_LOGICAL_RT_PORT_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-    VLOG_INFO("logical rt port insert returned error: %d\n", error);
-    return error;
-}
 
 static uint32_t
 nb_logical_router_port_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     VLOG_INFO("nb_logical_router_port_ldap_select called\n");
 
@@ -2044,7 +2050,8 @@ static uint32_t
 nb_logical_router_port_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2056,7 +2063,8 @@ static uint32_t
 nb_logical_router_port_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2070,108 +2078,82 @@ nb_gateway_chassis_init(void) {
         nb_gateway_chassis_ldap_insert,
         nb_gateway_chassis_ldap_select,
         nb_gateway_chassis_ldap_delete,
-        nb_gateway_chassis_ldap_update
+        nb_gateway_chassis_ldap_update,
+        nb_gateway_chassis_ldap_get_column_set
     };
     VLOG_INFO("nb_gateway_chassis_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_gateway_chassis_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_GW_CHASSIS_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_name = NULL;
+    char *ovs_gw_chassis_ovs_name = NULL;
+    char *ovs_priority = NULL;
+    char *ovs_options = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_gw_chassis_ovs_name = NULL;
+    char *ovsdb_priority = NULL;
+    char *ovsdb_options = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_gw_chassis_ovs_name, OVS_GW_CHASSIS_OVS_NAME);
+    OvsAllocateString(&ovs_priority, OVS_PRIORITY);
+    OvsAllocateString(&ovs_options, OVS_OPTIONS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_gw_chassis_ovs_name, OVSDB_GW_CHASSIS_OVS_NAME);
+    OvsAllocateString(&ovsdb_priority, OVSDB_PRIORITY);
+    OvsAllocateString(&ovsdb_options, OVSDB_OPTIONS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_gw_chassis_ovs_name, OVS_COLUMN_STRING, ovsdb_gw_chassis_ovs_name, &ovsdb_type_string},
+        {ovs_priority, OVS_COLUMN_INTEGER, ovsdb_priority, &ovsdb_type_integer},
+        {ovs_options, OVS_COLUMN_MAP, ovsdb_options, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_GW_CHASSIS_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_gateway_chassis_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_gateway_chassis_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod nameSeq = { 0 };
-    LDAPMod chassisNameSeq = { 0 };
-    LDAPMod prioritySeq = { 0 };
-    LDAPMod optionsSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &nameSeq,
-        &chassisNameSeq,
-        &prioritySeq,
-        &optionsSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_GW_CHASSIS_OVS_NAME, OVS_COLUMN_STRING, &chassisNameSeq, OVSDB_GW_CHASSIS_OVS_NAME, &ovsdb_type_string},
-        {OVS_PRIORITY, OVS_COLUMN_INTEGER, &prioritySeq, OVSDB_PRIORITY, &ovsdb_type_integer},
-        {OVS_OPTIONS, OVS_COLUMN_MAP, &optionsSeq, OVSDB_OPTIONS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_GW_CHASSIS_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_GW_CHASSIS_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_GW_CHASSIS_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_GW_CHASSIS_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_GW_CHASSIS_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_gateway_chassis_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2183,7 +2165,8 @@ static uint32_t
 nb_gateway_chassis_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2195,7 +2178,8 @@ static uint32_t
 nb_gateway_chassis_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2209,112 +2193,87 @@ nb_nat_init(void) {
         nb_nat_ldap_insert,
         nb_nat_ldap_select,
         nb_nat_ldap_delete,
-        nb_nat_ldap_update
+        nb_nat_ldap_update,
+        nb_nat_ldap_get_column_set
     };
     VLOG_INFO("nb_nat_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_nat_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_NAT_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_external_ip = NULL;
+    char *ovs_external_mac = NULL;
+    char *ovs_logical_ip = NULL;
+    char *ovs_logical_port = NULL;
+    char *ovs_nat_type = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_external_ip = NULL;
+    char *ovsdb_external_mac = NULL;
+    char *ovsdb_logical_ip = NULL;
+    char *ovsdb_logical_port = NULL;
+    char *ovsdb_nat_type = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_external_ip, OVS_EXTERNAL_IP);
+    OvsAllocateString(&ovs_external_mac, OVS_EXTERNAL_MAC);
+    OvsAllocateString(&ovs_logical_ip, OVS_LOGICAL_IP);
+    OvsAllocateString(&ovs_logical_port, OVS_LOGICAL_PORT);
+    OvsAllocateString(&ovs_nat_type, OVS_NAT_TYPE);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_external_ip, OVSDB_EXTERNAL_IP);
+    OvsAllocateString(&ovsdb_external_mac, OVSDB_EXTERNAL_MAC);
+    OvsAllocateString(&ovsdb_logical_ip, OVSDB_LOGICAL_IP);
+    OvsAllocateString(&ovsdb_logical_port, OVSDB_LOGICAL_PORT);
+    OvsAllocateString(&ovsdb_nat_type, OVSDB_NAT_TYPE);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_external_ip, OVS_COLUMN_STRING, ovsdb_external_ip, &ovsdb_type_string},
+        {ovs_external_mac, OVS_COLUMN_STRING, ovsdb_external_mac, &ovsdb_type_string},
+        {ovs_logical_ip, OVS_COLUMN_STRING, ovsdb_logical_ip, &ovsdb_type_string},
+        {ovs_logical_port, OVS_COLUMN_STRING, ovsdb_logical_port, &ovsdb_type_string},
+        {ovs_nat_type, OVS_COLUMN_STRING, ovsdb_nat_type, &ovsdb_type_string},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_NAT_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_nat_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_nat_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod externalIpSeq = { 0 };
-    LDAPMod externalMacSeq = { 0 };
-    LDAPMod logicalIpSeq = { 0 };
-    LDAPMod logicalPortSeq = { 0 };
-    LDAPMod typeSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &externalIpSeq,
-        &externalMacSeq,
-        &logicalIpSeq,
-        &logicalPortSeq,
-        &typeSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_EXTERNAL_IP, OVS_COLUMN_STRING, &externalIpSeq, OVSDB_EXTERNAL_IP, &ovsdb_type_string},
-        {OVS_EXTERNAL_MAC, OVS_COLUMN_STRING, &externalMacSeq, OVSDB_EXTERNAL_MAC, &ovsdb_type_string},
-        {OVS_LOGICAL_IP, OVS_COLUMN_STRING, &logicalIpSeq, OVSDB_LOGICAL_IP, &ovsdb_type_string},
-        {OVS_LOGICAL_PORT, OVS_COLUMN_STRING, &logicalPortSeq, OVSDB_LOGICAL_PORT, &ovsdb_type_string},
-        {OVS_NAT_TYPE, OVS_COLUMN_STRING, &typeSeq, OVSDB_NAT_TYPE, &ovsdb_type_string},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_NAT_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_NAT_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_NAT_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_NAT_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_NAT_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_nat_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2326,7 +2285,8 @@ static uint32_t
 nb_nat_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2338,7 +2298,8 @@ static uint32_t
 nb_nat_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2352,109 +2313,82 @@ nb_logical_router_static_route_init(void) {
         nb_logical_router_static_route_ldap_insert,
         nb_logical_router_static_route_ldap_select,
         nb_logical_router_static_route_ldap_delete,
-        nb_logical_router_static_route_ldap_update
+        nb_logical_router_static_route_ldap_update,
+        nb_logical_router_static_route_ldap_get_column_set
     };
     VLOG_INFO("nb_logical_router_static_route_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_logical_router_static_route_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_LOGICAL_RT_STATIC_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_policy = NULL;
+    char *ovs_next_hop = NULL;
+    char *ovs_ip_prefix = NULL;
+    char *ovs_output_port = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_policy = NULL;
+    char *ovsdb_next_hop = NULL;
+    char *ovsdb_ip_prefix = NULL;
+    char *ovsdb_output_port = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn,LDAP_CN);
+    OvsAllocateString(&ovs_policy,OVS_POLICY);
+    OvsAllocateString(&ovs_next_hop,OVS_NEXT_HOP);
+    OvsAllocateString(&ovs_ip_prefix,OVS_IP_PREFIX);
+    OvsAllocateString(&ovs_output_port,OVS_OUTPUT_PORT);
+    OvsAllocateString(&ovs_external_ids,OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid,OVSDB_UUID);
+    OvsAllocateString(&ovsdb_policy,OVSDB_POLICY);
+    OvsAllocateString(&ovsdb_next_hop,OVSDB_NEXT_HOP);
+    OvsAllocateString(&ovsdb_ip_prefix,OVSDB_IP_PREFIX);
+    OvsAllocateString(&ovsdb_output_port,OVSDB_OUTPUT_PORT);
+    OvsAllocateString(&ovsdb_external_ids,OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_policy, OVS_COLUMN_STRING, ovsdb_policy, &ovsdb_type_string},
+        {ovs_next_hop, OVS_COLUMN_STRING, ovsdb_next_hop, &ovsdb_type_string},
+        {ovs_ip_prefix, OVS_COLUMN_STRING, ovsdb_ip_prefix, &ovsdb_type_string},
+        {ovs_output_port, OVS_COLUMN_STRING, ovsdb_output_port, &ovsdb_type_string},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_LOGICAL_RT_STATIC_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_logical_router_static_route_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_logical_router_static_route_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod policySeq = { 0 };
-    LDAPMod nextHopSeq = { 0 };
-    LDAPMod ipPrefixSeq = { 0 };
-    LDAPMod outputPortSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &policySeq,
-        &nextHopSeq,
-        &ipPrefixSeq,
-        &outputPortSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_POLICY, OVS_COLUMN_STRING, &policySeq, OVSDB_POLICY, &ovsdb_type_string},
-        {OVS_NEXT_HOP, OVS_COLUMN_STRING, &nextHopSeq, OVSDB_NEXT_HOP, &ovsdb_type_string},
-        {OVS_IP_PREFIX, OVS_COLUMN_STRING, &ipPrefixSeq, OVSDB_IP_PREFIX, &ovsdb_type_string},
-        {OVS_OUTPUT_PORT, OVS_COLUMN_STRING, &outputPortSeq, OVSDB_OUTPUT_PORT, &ovsdb_type_string},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_LOGICAL_RT_STATIC_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_LOGICAL_RT_STATIC_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_LOGICAL_RT_STATIC_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_LOGICAL_RT_STATIC_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_LOGICAL_RT_STATIC_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_logical_router_static_route_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2466,7 +2400,8 @@ static uint32_t
 nb_logical_router_static_route_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2478,7 +2413,8 @@ static uint32_t
 nb_logical_router_static_route_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2492,105 +2428,77 @@ nb_load_balancer_init(void) {
         nb_load_balancer_ldap_insert,
         nb_load_balancer_ldap_select,
         nb_load_balancer_ldap_delete,
-        nb_load_balancer_ldap_update
+        nb_load_balancer_ldap_update,
+        nb_load_balancer_ldap_get_column_set
     };
     VLOG_INFO("nb_load_balancer_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_load_balancer_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_LB_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_name = NULL;
+    char *ovs_protocol = NULL;
+    char *ovs_vips = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_protocol = NULL;
+    char *ovsdb_vips = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_protocol, OVS_PROTOCOL);
+    OvsAllocateString(&ovs_vips, OVS_VIPS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_protocol, OVSDB_PROTOCOL);
+    OvsAllocateString(&ovsdb_vips, OVSDB_VIPS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_protocol, OVS_COLUMN_STRING, ovsdb_protocol, &ovsdb_type_string},
+        {ovs_vips, OVS_COLUMN_MAP, ovsdb_vips, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_LB_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_load_balancer_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_load_balancer_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod nameSeq = { 0 };
-    LDAPMod protocolSeq = { 0 };
-    LDAPMod vipSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &nameSeq,
-        &protocolSeq,
-        &vipSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_PROTOCOL, OVS_COLUMN_STRING, &protocolSeq, OVSDB_PROTOCOL, &ovsdb_type_string},
-        {OVS_VIPS, OVS_COLUMN_MAP, &vipSeq, OVSDB_VIPS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_LB_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_LB_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_LB_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_LB_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_LB_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_load_balancer_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2602,7 +2510,8 @@ static uint32_t
 nb_load_balancer_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2614,7 +2523,8 @@ static uint32_t
 nb_load_balancer_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2628,114 +2538,97 @@ nb_logical_switch_init(void) {
         nb_logical_switch_ldap_insert,
         nb_logical_switch_ldap_select,
         nb_logical_switch_ldap_delete,
-        nb_logical_switch_ldap_update
+        nb_logical_switch_ldap_update,
+        nb_logical_switch_ldap_get_column_set
     };
     VLOG_INFO("nb_logical_switch_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_logical_switch_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_LOGICAL_SWITCH_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_name = NULL;
+    char *ovs_port_set = NULL;
+    char *ovs_lb_set = NULL;
+    char *ovs_acl_set = NULL;
+    char *ovs_qos_set = NULL;
+    char *ovs_dns_set = NULL;
+    char *ovs_configs = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_port_set = NULL;
+    char *ovsdb_lb_set = NULL;
+    char *ovsdb_acl_set = NULL;
+    char *ovsdb_qos_set = NULL;
+    char *ovsdb_dns_set = NULL;
+    char *ovsdb_configs = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_port_set, OVS_PORT_SET);
+    OvsAllocateString(&ovs_lb_set, OVS_LB_SET);
+    OvsAllocateString(&ovs_acl_set, OVS_ACL_SET);
+    OvsAllocateString(&ovs_qos_set, OVS_QOS_SET);
+    OvsAllocateString(&ovs_dns_set, OVS_DNS_SET);
+    OvsAllocateString(&ovs_configs, OVS_CONFIGS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_port_set, OVSDB_PORT_SET);
+    OvsAllocateString(&ovsdb_lb_set, OVSDB_LB_SET);
+    OvsAllocateString(&ovsdb_acl_set, OVSDB_ACL_SET);
+    OvsAllocateString(&ovsdb_qos_set, OVSDB_QOS_SET);
+    OvsAllocateString(&ovsdb_dns_set, OVSDB_DNS_SET);
+    OvsAllocateString(&ovsdb_configs, OVSDB_CONFIGS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_port_set, OVS_COLUMN_SET, ovsdb_port_set, &ovsdb_type_string_set},
+        {ovs_lb_set, OVS_COLUMN_SET, ovsdb_lb_set, &ovsdb_type_string_set},
+        {ovs_acl_set, OVS_COLUMN_SET, ovsdb_acl_set, &ovsdb_type_string_set},
+        {ovs_qos_set, OVS_COLUMN_SET, ovsdb_qos_set, &ovsdb_type_string_set},
+        {ovs_dns_set, OVS_COLUMN_SET, ovsdb_dns_set, &ovsdb_type_string_set},
+        {ovs_configs, OVS_COLUMN_MAP, ovsdb_configs, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_LOGICAL_SWITCH_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_logical_switch_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_logical_switch_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod nameSequence = { 0 };
-    LDAPMod portSequence = { 0 };
-    LDAPMod lbSequence = { 0 };
-    LDAPMod aclSequence = { 0 };
-    LDAPMod qosSequence = { 0 };
-    LDAPMod dnsSequence = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod configSetSeq = { 0 };
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &nameSequence,
-        &portSequence,
-        &lbSequence,
-        &aclSequence,
-        &qosSequence,
-        &dnsSequence,
-        &configSetSeq,
-        &externalIdsSeq,
-        NULL
-    };
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSequence, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_PORT_SET, OVS_COLUMN_SET, &portSequence, OVSDB_PORT_SET, &ovsdb_type_string_set},
-        {OVS_LB_SET, OVS_COLUMN_SET, &lbSequence, OVSDB_LB_SET, &ovsdb_type_string_set},
-        {OVS_ACL_SET, OVS_COLUMN_SET, &aclSequence, OVSDB_ACL_SET, &ovsdb_type_string_set},
-        {OVS_QOS_SET, OVS_COLUMN_SET, &qosSequence, OVSDB_QOS_SET, &ovsdb_type_string_set},
-        {OVS_DNS_SET, OVS_COLUMN_SET, &dnsSequence, OVSDB_DNS_SET, &ovsdb_type_string_set},
-        {OVS_CONFIGS, OVS_COLUMN_MAP, &configSetSeq, OVSDB_CONFIGS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        return ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_LOGICAL_SWITCH_COL_COUNT);
-    BAIL_ON_ERROR(error)
-
-    error = ldap_object_class_helper(
-        NB_LOGICAL_SW_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_LOGICAL_SW_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_LOGICAL_SW_OBJ_CLASS_NAME
         );
     }
-error:
-    attrs_cleanup(attrs, NB_LOGICAL_SWITCH_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-    VLOG_INFO("logical switch insert returned error: %d\n", error);
-    return error;
-}
 
 static uint32_t
 nb_logical_switch_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2747,7 +2640,8 @@ static uint32_t
 nb_logical_switch_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2759,7 +2653,8 @@ static uint32_t
 nb_logical_switch_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2773,135 +2668,127 @@ nb_logical_switch_port_init(void) {
         nb_logical_switch_port_ldap_insert,
         nb_logical_switch_port_ldap_select,
         nb_logical_switch_port_ldap_delete,
-        nb_logical_switch_port_ldap_update
+        nb_logical_switch_port_ldap_update,
+        nb_logical_switch_port_ldap_get_column_set
     };
     VLOG_INFO("nb_logical_switch_port_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_logical_switch_port_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_LOGICAL_SW_PORT_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_name = NULL;
+    char *ovs_logical_sw_port_ovs_type = NULL;
+    char *ovs_addresses = NULL;
+    char *ovs_logical_sw_port_ovs_security = NULL;
+    char *ovs_parent_name = NULL;
+    char *ovs_tag_request = NULL;
+    char *ovs_tag = NULL;
+    char *ovs_is_up = NULL;
+    char *ovs_is_enabled = NULL;
+    char *ovs_dyn_addresses = NULL;
+    char *ovs_dhcp_v4 = NULL;
+    char *ovs_dhcp_v6 = NULL;
+    char *ovs_options = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_logical_sw_port_ovs_type = NULL;
+    char *ovsdb_addresses = NULL;
+    char *ovsdb_logical_sw_port_ovs_security = NULL;
+    char *ovsdb_parent_name = NULL;
+    char *ovsdb_tag_request = NULL;
+    char *ovsdb_tag = NULL;
+    char *ovsdb_is_up = NULL;
+    char *ovsdb_is_enabled = NULL;
+    char *ovsdb_dyn_addresses = NULL;
+    char *ovsdb_dhcp_v4 = NULL;
+    char *ovsdb_dhcp_v6 = NULL;
+    char *ovsdb_options = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_logical_sw_port_ovs_type, OVS_LOGICAL_SW_PORT_OVS_TYPE);
+    OvsAllocateString(&ovs_addresses, OVS_ADDRESSES);
+    OvsAllocateString(&ovs_logical_sw_port_ovs_security, OVS_LOGICAL_SW_PORT_OVS_SECURITY);
+    OvsAllocateString(&ovs_parent_name, OVS_PARENT_NAME);
+    OvsAllocateString(&ovs_tag_request, OVS_TAG_REQUEST);
+    OvsAllocateString(&ovs_tag, OVS_TAG);
+    OvsAllocateString(&ovs_is_up, OVS_IS_UP);
+    OvsAllocateString(&ovs_is_enabled, OVS_IS_ENABLED);
+    OvsAllocateString(&ovs_dyn_addresses, OVS_DYN_ADDRESSES);
+    OvsAllocateString(&ovs_dhcp_v4, OVS_DHCP_V4);
+    OvsAllocateString(&ovs_dhcp_v6, OVS_DHCP_V6);
+    OvsAllocateString(&ovs_options, OVS_OPTIONS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_logical_sw_port_ovs_type, OVSDB_LOGICAL_SW_PORT_OVS_TYPE);
+    OvsAllocateString(&ovsdb_addresses, OVSDB_ADDRESSES);
+    OvsAllocateString(&ovsdb_logical_sw_port_ovs_security, OVSDB_LOGICAL_SW_PORT_OVS_SECURITY);
+    OvsAllocateString(&ovsdb_parent_name, OVSDB_PARENT_NAME);
+    OvsAllocateString(&ovsdb_tag_request, OVSDB_TAG_REQUEST);
+    OvsAllocateString(&ovsdb_tag, OVSDB_TAG);
+    OvsAllocateString(&ovsdb_is_up, OVSDB_IS_UP);
+    OvsAllocateString(&ovsdb_is_enabled, OVSDB_IS_ENABLED);
+    OvsAllocateString(&ovsdb_dyn_addresses, OVSDB_DYN_ADDRESSES);
+    OvsAllocateString(&ovsdb_dhcp_v4, OVSDB_DHCP_V4);
+    OvsAllocateString(&ovsdb_dhcp_v6, OVSDB_DHCP_V6);
+    OvsAllocateString(&ovsdb_options, OVSDB_OPTIONS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_logical_sw_port_ovs_type, OVS_COLUMN_STRING, ovsdb_logical_sw_port_ovs_type, &ovsdb_type_string},
+        {ovs_addresses, OVS_COLUMN_SET, ovsdb_addresses, &ovsdb_type_string_set},
+        {ovs_logical_sw_port_ovs_security, OVS_COLUMN_SET, ovsdb_logical_sw_port_ovs_security, &ovsdb_type_string_set},
+        {ovs_parent_name, OVS_COLUMN_STRING, ovsdb_parent_name, &ovsdb_type_string},
+        {ovs_tag_request, OVS_COLUMN_INTEGER, ovsdb_tag_request, &ovsdb_type_integer},
+        {ovs_tag, OVS_COLUMN_INTEGER, ovsdb_tag, &ovsdb_type_integer},
+        {ovs_is_up, OVS_COLUMN_BOOLEAN, ovsdb_is_up, &ovsdb_type_boolean},
+        {ovs_is_enabled, OVS_COLUMN_BOOLEAN, ovsdb_is_enabled, &ovsdb_type_boolean},
+        {ovs_dyn_addresses, OVS_COLUMN_STRING, ovsdb_dyn_addresses, &ovsdb_type_string},
+        {ovs_dhcp_v4, OVS_COLUMN_SET, ovsdb_dhcp_v4, &ovsdb_type_string_set},
+        {ovs_dhcp_v6, OVS_COLUMN_SET, ovsdb_dhcp_v6, &ovsdb_type_string_set},
+        {ovs_options, OVS_COLUMN_MAP, ovsdb_options, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_LOGICAL_SW_PORT_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_logical_switch_port_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_logical_switch_port_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod nameSeq = { 0 };
-    LDAPMod typeSeq = { 0 };
-    LDAPMod addressSeq = { 0 };
-    LDAPMod portSecuritySeq = { 0 };
-    LDAPMod parentNameSeq = { 0 };
-    LDAPMod tagRequestSeq = { 0 };
-    LDAPMod tagSeq = { 0 };
-    LDAPMod isUpSeq = { 0 };
-    LDAPMod isEnabledSeq = { 0 };
-    LDAPMod dynAddressSeq = { 0 };
-    LDAPMod dhcpV4Seq = { 0 };
-    LDAPMod dhcpV6Seq = { 0 };
-    LDAPMod optionsSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &nameSeq,
-        &typeSeq,
-        &addressSeq,
-        &portSecuritySeq,
-        &parentNameSeq,
-        &tagRequestSeq,
-        &tagSeq,
-        &isUpSeq,
-        &isEnabledSeq,
-        &dynAddressSeq,
-        &dhcpV4Seq,
-        &dhcpV6Seq,
-        &optionsSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_LOGICAL_SW_PORT_OVS_TYPE, OVS_COLUMN_STRING, &typeSeq, OVSDB_LOGICAL_SW_PORT_OVS_TYPE, &ovsdb_type_string},
-        {OVS_ADDRESSES, OVS_COLUMN_SET, &addressSeq, OVSDB_ADDRESSES, &ovsdb_type_string_set},
-        {OVS_LOGICAL_SW_PORT_OVS_SECURITY, OVS_COLUMN_SET, &portSecuritySeq, OVSDB_LOGICAL_SW_PORT_OVS_SECURITY, &ovsdb_type_string_set},
-        {OVS_PARENT_NAME, OVS_COLUMN_STRING, &parentNameSeq, OVSDB_PARENT_NAME, &ovsdb_type_string},
-        {OVS_TAG_REQUEST, OVS_COLUMN_INTEGER, &tagRequestSeq, OVSDB_TAG_REQUEST, &ovsdb_type_integer},
-        {OVS_TAG, OVS_COLUMN_INTEGER, &tagSeq, OVSDB_TAG, &ovsdb_type_integer},
-        {OVS_IS_UP, OVS_COLUMN_BOOLEAN, &isUpSeq, OVSDB_IS_UP, &ovsdb_type_boolean},
-        {OVS_IS_ENABLED, OVS_COLUMN_BOOLEAN, &isEnabledSeq, OVSDB_IS_ENABLED, &ovsdb_type_boolean},
-        {OVS_DYN_ADDRESSES, OVS_COLUMN_STRING, &dynAddressSeq, OVSDB_DYN_ADDRESSES, &ovsdb_type_string},
-        {OVS_DHCP_V4, OVS_COLUMN_SET, &dhcpV4Seq, OVSDB_DHCP_V4, &ovsdb_type_string_set},
-        {OVS_DHCP_V6, OVS_COLUMN_SET, &dhcpV6Seq, OVSDB_DHCP_V6, &ovsdb_type_string_set},
-        {OVS_OPTIONS, OVS_COLUMN_MAP, &optionsSeq, OVSDB_OPTIONS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_LOGICAL_SW_PORT_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_LOGICAL_SW_PORT_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_LOGICAL_SW_PORT_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_LOGICAL_SW_PORT_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_LOGICAL_SW_PORT_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_logical_switch_port_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2913,7 +2800,8 @@ static uint32_t
 nb_logical_switch_port_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2925,7 +2813,8 @@ static uint32_t
 nb_logical_switch_port_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -2939,102 +2828,72 @@ nb_dhcp_options_init(void) {
         nb_dhcp_options_ldap_insert,
         nb_dhcp_options_ldap_select,
         nb_dhcp_options_ldap_delete,
-        nb_dhcp_options_ldap_update
+        nb_dhcp_options_ldap_update,
+        nb_dhcp_options_ldap_get_column_set
     };
     VLOG_INFO("nb_dhcp_options_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_dhcp_options_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_DHCP_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_cidr = NULL;
+    char *ovs_options = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_cidr = NULL;
+    char *ovsdb_options = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_cidr, OVS_CIDR);
+    OvsAllocateString(&ovs_options, OVS_OPTIONS);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_cidr, OVSDB_CIDR);
+    OvsAllocateString(&ovsdb_options, OVSDB_OPTIONS);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_cidr, OVS_COLUMN_STRING, ovsdb_cidr, &ovsdb_type_string},
+        {ovs_options, OVS_COLUMN_MAP, ovsdb_options, &ovsdb_type_string_string_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_DHCP_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_dhcp_options_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_dhcp_options_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod cidr = { 0 };
-    LDAPMod optionsSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &cidr,
-        &optionsSeq,
-        &externalIdsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_CIDR, OVS_COLUMN_STRING, &cidr, OVSDB_CIDR, &ovsdb_type_string},
-        {OVS_OPTIONS, OVS_COLUMN_MAP, &optionsSeq, OVSDB_OPTIONS, &ovsdb_type_string_string_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_DHCP_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_DHCP_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_DHCP_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_DHCP_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_DHCP_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_dhcp_options_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3046,7 +2905,8 @@ static uint32_t
 nb_dhcp_options_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3058,7 +2918,8 @@ static uint32_t
 nb_dhcp_options_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3072,108 +2933,82 @@ nb_qos_init(void) {
         nb_qos_ldap_insert,
         nb_qos_ldap_select,
         nb_qos_ldap_delete,
-        nb_qos_ldap_update
+        nb_qos_ldap_update,
+        nb_qos_ldap_get_column_set
     };
     VLOG_INFO("nb_qos_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_qos_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_QOS_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_direction = NULL;
+    char *ovs_match = NULL;
+    char *ovs_priority = NULL;
+    char *ovs_dscp_action = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_direction = NULL;
+    char *ovsdb_match = NULL;
+    char *ovsdb_priority = NULL;
+    char *ovsdb_dscp_action = NULL;
+    char *ovsdb_external_ids = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_direction, OVS_DIRECTION);
+    OvsAllocateString(&ovs_match, OVS_MATCH);
+    OvsAllocateString(&ovs_priority, OVS_PRIORITY);
+    OvsAllocateString(&ovs_dscp_action, OVS_DSCP_ACTION);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_direction, OVSDB_DIRECTION);
+    OvsAllocateString(&ovsdb_match, OVSDB_MATCH);
+    OvsAllocateString(&ovsdb_priority, OVSDB_PRIORITY);
+    OvsAllocateString(&ovsdb_dscp_action, OVSDB_DSCP_ACTION);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_direction, OVS_COLUMN_STRING, ovsdb_direction, &ovsdb_type_string},
+        {ovs_match, OVS_COLUMN_STRING, ovsdb_match, &ovsdb_type_string},
+        {ovs_priority, OVS_COLUMN_INTEGER, ovsdb_priority, &ovsdb_type_integer},
+        {ovs_dscp_action, OVS_COLUMN_MAP, ovsdb_dscp_action, &ovsdb_type_string_integer_map},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_QOS_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_qos_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_qos_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod directionSeq = { 0 };
-    LDAPMod matchSeq = { 0 };
-    LDAPMod prioritySeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod dscpActionSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &directionSeq,
-        &matchSeq,
-        &prioritySeq,
-        &externalIdsSeq,
-        &dscpActionSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_DIRECTION, OVS_COLUMN_STRING, &directionSeq, OVSDB_DIRECTION, &ovsdb_type_string},
-        {OVS_MATCH, OVS_COLUMN_STRING, &matchSeq, OVSDB_MATCH, &ovsdb_type_string},
-        {OVS_PRIORITY, OVS_COLUMN_INTEGER, &prioritySeq, OVSDB_PRIORITY, &ovsdb_type_integer},
-        {OVS_DSCP_ACTION, OVS_COLUMN_MAP, &dscpActionSeq, OVSDB_DSCP_ACTION, &ovsdb_type_string_integer_map},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_QOS_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_QOS_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_QOS_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_QOS_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_QOS_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_qos_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3185,7 +3020,8 @@ static uint32_t
 nb_qos_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3197,7 +3033,8 @@ static uint32_t
 nb_qos_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3211,99 +3048,67 @@ nb_dns_config_init(void) {
         nb_dns_config_ldap_insert,
         nb_dns_config_ldap_select,
         nb_dns_config_ldap_delete,
-        nb_dns_config_ldap_update
+        nb_dns_config_ldap_update,
+        nb_dns_config_ldap_get_column_set
     };
     VLOG_INFO("nb_dns_config_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_dns_config_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_DNS_RECORDS_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovs_dns_records = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_external_ids = NULL;
+    char *ovsdb_dns_records = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovs_dns_records, OVS_DNS_RECORDS);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_dns_records, OVSDB_DNS_RECORDS);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+        {ovs_dns_records, OVS_COLUMN_MAP, ovsdb_dns_records, &ovsdb_type_string_string_map},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_DNS_RECORDS_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_dns_config_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_dns_config_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod recordsSeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &externalIdsSeq,
-        &recordsSeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-        {OVS_DNS_RECORDS, OVS_COLUMN_MAP, &recordsSeq, OVSDB_DNS_RECORDS, &ovsdb_type_string_string_map},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_DNS_RECORDS_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_DNS_RECORDS_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_DNS_RECORDS_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_DNS_RECORDS_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_DNS_RECORDS_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_dns_config_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3315,7 +3120,8 @@ static uint32_t
 nb_dns_config_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3327,7 +3133,8 @@ static uint32_t
 nb_dns_config_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3341,117 +3148,97 @@ nb_acl_init(void) {
         nb_acl_ldap_insert,
         nb_acl_ldap_select,
         nb_acl_ldap_delete,
-        nb_acl_ldap_update
+        nb_acl_ldap_update,
+        nb_acl_ldap_get_column_set
     };
     VLOG_INFO("nb_acl_init called\n");
     return ldap_fn_table;
+}
+
+static
+struct ovs_column_set
+nb_acl_ldap_get_column_set(void) {
+    struct ovs_column *columns = NULL;
+    OvsAllocateMemory((void **) &columns, NB_ACL_COL_COUNT * sizeof(*columns));
+
+    char *ldap_cn = NULL;
+    char *ovs_name = NULL;
+    char *ovs_acl_action = NULL;
+    char *ovs_direction = NULL;
+    char *ovs_match = NULL;
+    char *ovs_external_ids = NULL;
+    char *ovs_acl_log = NULL;
+    char *ovs_priority = NULL;
+    char *ovs_acl_severity = NULL;
+    char *ovsdb_uuid = NULL;
+    char *ovsdb_name = NULL;
+    char *ovsdb_acl_action = NULL;
+    char *ovsdb_direction = NULL;
+    char *ovsdb_match = NULL;
+    char *ovsdb_external_ids = NULL;
+    char *ovsdb_acl_log = NULL;
+    char *ovsdb_priority = NULL;
+    char *ovsdb_acl_severity = NULL;
+
+    OvsAllocateString(&ldap_cn, LDAP_CN);
+    OvsAllocateString(&ovs_name, OVS_NAME);
+    OvsAllocateString(&ovs_acl_action, OVS_ACL_ACTION);
+    OvsAllocateString(&ovs_direction, OVS_DIRECTION);
+    OvsAllocateString(&ovs_match, OVS_MATCH);
+    OvsAllocateString(&ovs_external_ids, OVS_EXTERNAL_IDS);
+    OvsAllocateString(&ovs_acl_log, OVS_ACL_LOG);
+    OvsAllocateString(&ovs_priority, OVS_PRIORITY);
+    OvsAllocateString(&ovs_acl_severity, OVS_ACL_SEVERITY);
+    OvsAllocateString(&ovsdb_uuid, OVSDB_UUID);
+    OvsAllocateString(&ovsdb_name, OVSDB_NAME);
+    OvsAllocateString(&ovsdb_acl_action, OVSDB_ACL_ACTION);
+    OvsAllocateString(&ovsdb_direction, OVSDB_DIRECTION);
+    OvsAllocateString(&ovsdb_match, OVSDB_MATCH);
+    OvsAllocateString(&ovsdb_external_ids, OVSDB_EXTERNAL_IDS);
+    OvsAllocateString(&ovsdb_acl_log, OVSDB_ACL_LOG);
+    OvsAllocateString(&ovsdb_priority, OVSDB_PRIORITY);
+    OvsAllocateString(&ovsdb_acl_severity, OVSDB_ACL_SEVERITY);
+
+    struct ovs_column columns_data[] = {
+        {ldap_cn, OVS_COLUMN_UUID, ovsdb_uuid, &ovsdb_type_uuid},
+        {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
+        {ovs_acl_action, OVS_COLUMN_STRING, ovsdb_acl_action, &ovsdb_type_string},
+        {ovs_direction, OVS_COLUMN_STRING, ovsdb_direction, &ovsdb_type_string},
+        {ovs_match, OVS_COLUMN_STRING, ovsdb_match, &ovsdb_type_string},
+        {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},
+        {ovs_acl_log, OVS_COLUMN_BOOLEAN, ovsdb_acl_log, &ovsdb_type_boolean},
+        {ovs_priority, OVS_COLUMN_INTEGER, ovsdb_priority, &ovsdb_type_integer},
+        {ovs_acl_severity, OVS_COLUMN_STRING, ovsdb_acl_severity, &ovsdb_type_string},
+    };
+    memcpy(columns, columns_data, sizeof(columns_data));
+    struct ovs_column_set ovs_column_set = {columns, NB_ACL_COL_COUNT};
+    return ovs_column_set;
 }
 
 static uint32_t
 nb_acl_ldap_insert(
     PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_parser *parser,
-    struct json *result
+    struct json *result,
+    const struct ovs_column_set *povs_column_set
 ) {
     VLOG_INFO("nb_acl_ldap_insert called\n");
 
-    static uint32_t error = 0;
-    const struct json *row_json;
-    struct ovsdb_error *ovsdb_error = NULL;
-
-    LDAPMod nbObjectClass = { 0 };
-    LDAPMod cn = { 0 };
-    LDAPMod nameSeq = { 0 };
-    LDAPMod actionSeq = { 0 };
-    LDAPMod directionSeq = { 0 };
-    LDAPMod matchSeq = { 0 };
-    LDAPMod externalIdsSeq = { 0 };
-    LDAPMod logSeq = { 0 };
-    LDAPMod prioritySeq = { 0 };
-    LDAPMod severitySeq = { 0 };
-
-    LDAPMod * attrs[] = {
-        &nbObjectClass,
-        &cn,
-        &nameSeq,
-        &actionSeq,
-        &directionSeq,
-        &matchSeq,
-        &externalIdsSeq,
-        &logSeq,
-        &prioritySeq,
-        &severitySeq,
-        NULL
-    };
-
-    struct ovs_column columns[] = {
-        {LDAP_CN, OVS_COLUMN_UUID, &cn, OVSDB_UUID, &ovsdb_type_uuid},
-        {OVS_NAME, OVS_COLUMN_STRING, &nameSeq, OVSDB_NAME, &ovsdb_type_string},
-        {OVS_ACL_ACTION, OVS_COLUMN_STRING, &actionSeq, OVSDB_ACL_ACTION, &ovsdb_type_string},
-        {OVS_DIRECTION, OVS_COLUMN_STRING, &directionSeq, OVSDB_DIRECTION, &ovsdb_type_string},
-        {OVS_MATCH, OVS_COLUMN_STRING, &matchSeq, OVSDB_MATCH, &ovsdb_type_string},
-        {OVS_EXTERNAL_IDS, OVS_COLUMN_MAP, &externalIdsSeq, OVSDB_EXTERNAL_IDS, &ovsdb_type_string_string_map},
-        {OVS_ACL_LOG, OVS_COLUMN_BOOLEAN, &logSeq, OVSDB_ACL_LOG, &ovsdb_type_boolean},
-        {OVS_PRIORITY, OVS_COLUMN_INTEGER, &prioritySeq, OVSDB_PRIORITY, &ovsdb_type_integer},
-        {OVS_ACL_SEVERITY, OVS_COLUMN_STRING, &severitySeq, OVSDB_ACL_SEVERITY, &ovsdb_type_string},
-    };
-
-    row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
-    ovsdb_error = ovsdb_parser_get_error(parser);
-    if (ovsdb_error) {
-        error = ovsdb_error->errno_;
-        BAIL_ON_ERROR(error)
-    }
-    error = ldap_parse_row(row_json, columns, NB_ACL_COL_COUNT);
-    BAIL_ON_ERROR(error);
-
-    error = ldap_object_class_helper(
-        NB_ACL_OBJ_CLASS_NAME,
-        LDAP_TOP,
-        &nbObjectClass
-    );
-    BAIL_ON_ERROR(error)
-
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pContext->ldap_conn->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
-    error = OvsLdapAddImpl(
-        pContext->ldap_conn,
-        attrs,
-        pDn,
-        NB_ACL_OBJ_CLASS_NAME,
-        cn.mod_vals.modv_strvals[0]
-    );
-    BAIL_ON_ERROR(error);
-
-    if (!ovsdb_error) {
-        json_object_put(
+    return nb_ldap_insert_helper(
+        pContext,
+        parser,
             result,
-            "uuid",
-            wrap_json(
-                "uuid",
-                json_string_create_nocopy(
-                    cn.mod_vals.modv_strvals[0]
-                )
-            )
+        povs_column_set,
+        NB_ACL_OBJ_CLASS_NAME
         );
     }
-
-error:
-    attrs_cleanup(attrs, NB_ACL_COL_COUNT);
-    ovsdb_error_destroy(ovsdb_error);
-
-    return error;
-}
 
 static uint32_t
 nb_acl_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3463,7 +3250,8 @@ static uint32_t
 nb_acl_ldap_delete(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     result->count = 0;
@@ -3475,7 +3263,8 @@ static uint32_t
 nb_acl_ldap_update(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
-    struct json *result OVS_UNUSED
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     static uint32_t error = 0;
     VLOG_INFO("nb_acl_ldap_update called\n");
@@ -3636,6 +3425,16 @@ db_provider_shutdown(DB_FUNCTION_TABLE *pLdapFnTable)
     }
 }
 
+static
+void
+ovs_column_set_cleanup(const struct ovs_column_set *povs_column_set) {
+    size_t i;
+    for (i = 0; i < povs_column_set->n_columns; i++) {
+        OvsFreeString(povs_column_set->ovs_columns[i].ldap_column_name);
+        OvsFreeString(povs_column_set->ovs_columns[i].ovsdb_column_name);
+    }
+    OvsFreeMemory(povs_column_set->ovs_columns);
+}
 
 struct ovsdb_txn *
 ldap_execute_compose_intf(
@@ -3692,7 +3491,15 @@ ldap_execute_compose_intf(
                     &ro
                 );
                 if (pfn_ldap_operation) {
-                    error = pfn_ldap_operation(pContext, &parser, result);
+                    const struct ovs_column_set ovs_column_set =
+                        ldap_obj_fn_table.pfn_ldap_get_column_set();
+                    error = pfn_ldap_operation(
+                        pContext,
+                        &parser,
+                        result,
+                        &ovs_column_set
+                    );
+                    ovs_column_set_cleanup(&ovs_column_set);
                     if (error) {
                         VLOG_INFO("pfn_ldap_operation encountered an error %d\n", error);
                     }

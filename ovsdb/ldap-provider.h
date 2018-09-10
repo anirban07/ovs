@@ -15,6 +15,7 @@
 #include "jsonrpc-server.h"
 #include "memory.h"
 #include "ovsdb.h"
+#include "ovsdb-condition.h"
 #include "ovsdb-data.h"
 #include "ovsdb-error.h"
 #include "ovsdb-intf.h"
@@ -351,6 +352,40 @@ typedef struct _DB_INTERFACE_CONTEXT_T {
     bool *exiting;
 } DB_INTERFACE_CONTEXT_T;
 
+typedef enum _OVS_COLUMN_TYPE {
+    OVS_COLUMN_DEFAULT,
+    OVS_COLUMN_UUID,
+    OVS_COLUMN_STRING,
+    OVS_COLUMN_BOOLEAN,
+    OVS_COLUMN_SET,
+    OVS_COLUMN_MAP,
+    OVS_COLUMN_INTEGER
+} OVS_COLUMN_TYPE;
+
+
+struct ovs_clause {
+    const char *column_name;
+    enum ovsdb_function function;
+    struct ovsdb_datum *value;
+};
+
+struct ovs_condition {
+    struct ovs_clause *ovs_clauses;
+    size_t n_clauses;
+};
+
+struct ovs_column {
+    char * ldap_column_name;
+    const OVS_COLUMN_TYPE column_type;
+    char * ovsdb_column_name;
+    const struct ovsdb_type * pcolumn_ovsdb_type;
+};
+
+struct ovs_column_set {
+    struct ovs_column * ovs_columns;
+    size_t n_columns;
+};
+
 void
 OvsFreeConnection(
     ovs_ldap_context_t* pConnection
@@ -572,8 +607,11 @@ ldap_add_db_to_context_intf(
 typedef uint32_t FN_LDAP_OPERATION (
     PDB_INTERFACE_CONTEXT_T,
     struct ovsdb_parser *,
-    struct json *
+    struct json *,
+    const struct ovs_column_set *
 );
+
+typedef struct ovs_column_set FN_LDAP_GET_OVS_COLUMN_SET (void);
 
 typedef struct __LDAP_FUNCTION_TABLE
 {
@@ -581,25 +619,9 @@ typedef struct __LDAP_FUNCTION_TABLE
     FN_LDAP_OPERATION *pfn_ldap_select;
     FN_LDAP_OPERATION *pfn_ldap_delete;
     FN_LDAP_OPERATION *pfn_ldap_update;
+    FN_LDAP_GET_OVS_COLUMN_SET *pfn_ldap_get_column_set;
 } LDAP_FUNCTION_TABLE;
 
 typedef LDAP_FUNCTION_TABLE LDAP_FUNCTION_TABLE_INIT (void);
-
-typedef enum _OVS_COLUMN_TYPE {
-    OVS_COLUMN_UUID,
-    OVS_COLUMN_STRING,
-    OVS_COLUMN_BOOLEAN,
-    OVS_COLUMN_SET,
-    OVS_COLUMN_MAP,
-    OVS_COLUMN_INTEGER
-} OVS_COLUMN_TYPE;
-
-struct ovs_column {
-    char *ldap_column_name;
-    OVS_COLUMN_TYPE column_type;
-    LDAPMod *pLDAPMod;
-    char *ovsdb_column_name;
-    const struct ovsdb_type *pcolumn_ovsdb_type;
-};
 
 #endif /* LDAP_PROVIDER_H */

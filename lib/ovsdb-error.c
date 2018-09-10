@@ -27,13 +27,6 @@
 
 VLOG_DEFINE_THIS_MODULE(ovsdb_error);
 
-struct ovsdb_error {
-    const char *tag;            /* String for "error" member. */
-    char *details;              /* String for "details" member. */
-    char *syntax;               /* String for "syntax" member. */
-    int errno_;                 /* Unix errno value, 0 if none. */
-};
-
 static struct ovsdb_error *
 ovsdb_error_valist(const char *tag, const char *details, va_list args)
 {

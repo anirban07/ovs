@@ -291,7 +291,10 @@ struct ovsdb_symbol *ovsdb_symbol_table_put(struct ovsdb_symbol_table *,
                                             const struct uuid *, bool used);
 struct ovsdb_symbol *ovsdb_symbol_table_insert(struct ovsdb_symbol_table *,
                                                const char *name);
-
+
+struct json *
+wrap_json(const char *name, struct json *wrapped);;
+
 /* Tokenization
  *
  * Used by ovsdb_atom_from_string() and ovsdb_datum_from_string(). */

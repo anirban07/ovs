@@ -142,12 +142,18 @@ struct ovsdb_type {
 };
 
 #define OVSDB_TYPE_SCALAR_INITIALIZER(KEY) { KEY, OVSDB_BASE_VOID_INIT, 1, 1 }
+#define OVSDB_TYPE_SET_INITIALIZER(KEY) { KEY, OVSDB_BASE_VOID_INIT, 0, 0 }
+#define OVSDB_TYPE_MAP_INITIALIZER(KEY, VALUE) { KEY, VALUE, 0, 1 }
 
 extern const struct ovsdb_type ovsdb_type_integer;
 extern const struct ovsdb_type ovsdb_type_real;
 extern const struct ovsdb_type ovsdb_type_boolean;
 extern const struct ovsdb_type ovsdb_type_string;
 extern const struct ovsdb_type ovsdb_type_uuid;
+
+extern const struct ovsdb_type ovsdb_type_string_set;
+extern const struct ovsdb_type ovsdb_type_string_string_map;
+extern const struct ovsdb_type ovsdb_type_string_integer_map;
 
 void ovsdb_type_clone(struct ovsdb_type *, const struct ovsdb_type *);
 void ovsdb_type_destroy(struct ovsdb_type *);

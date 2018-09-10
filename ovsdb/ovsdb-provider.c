@@ -496,9 +496,14 @@ ovsdb_unixctl_cmd_register_intf(
 
     bool *is_backup = pContext->server_cfg->is_backup;
     struct ovsdb_jsonrpc_server *jsonrpc = pContext->server_cfg->jsonrpc;
-    char *sync_from = *(pContext->server_cfg->sync_from);
-    char *sync_exclude = *(pContext->server_cfg->sync_exclude);
-    struct shash *all_dbs = pContext->server_cfg->all_dbs;
+    char *sync_from = NULL;
+    if (pContext->server_cfg->sync_from) {
+        sync_from = *(pContext->server_cfg->sync_from);
+    }
+    char *sync_exclude = NULL;
+    if (pContext->server_cfg->sync_exclude) {
+        sync_exclude = *(pContext->server_cfg->sync_exclude);
+    }    struct shash *all_dbs = pContext->server_cfg->all_dbs;
 
     if (*is_backup) {
         const struct uuid *server_uuid;

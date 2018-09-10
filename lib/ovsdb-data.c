@@ -34,7 +34,7 @@
 #include "unicode.h"
 #include "util.h"
 
-static struct json *
+struct json *
 wrap_json(const char *name, struct json *wrapped)
 {
     return json_array_create_2(json_string_create(name), wrapped);

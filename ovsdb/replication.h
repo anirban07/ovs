@@ -19,6 +19,7 @@
 #define REPLICATION_H 1
 
 #include <stdbool.h>
+#include "ovsdb-intf.h"
 struct ovsdb;
 
 /* Replication module runs when OVSDB server runs in the backup mode.
@@ -46,7 +47,8 @@ struct ovsdb;
 
 void replication_init(const char *sync_from, const char *exclude_tables,
                       const struct uuid *server);
-void replication_run(void);
+void replication_run(DB_FUNCTION_TABLE *pDbFnTable,
+                     PDB_INTERFACE_CONTEXT_T pContext);
 void replication_wait(void);
 void replication_destroy(void);
 void replication_usage(void);

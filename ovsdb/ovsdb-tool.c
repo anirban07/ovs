@@ -616,11 +616,27 @@ transact(struct ovs_cmdl_context *ctx, bool rw)
 {
     const char *db_file_name = ctx->argc >= 3 ? ctx->argv[1] : default_db();
     const char *transaction = ctx->argv[ctx->argc - 1];
+    DB_FUNCTION_TABLE *pDbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pDbIntfContext = NULL;
+    uint32_t ret_error = 0;
+
+    ret_error = db_provider_init(&pDbFnTable);
+    if (ret_error) {
+        ovs_fatal(ret_error, "Unable to initialize provider");
+    }
+    ret_error = pDbFnTable->pfn_db_open_context(&pDbIntfContext, 0);
+    if (ret_error) {
+        db_provider_shutdown(pDbFnTable);
+        ovs_fatal(ret_error, "Failed to fetch context");
+    }
+
 
     struct ovsdb *ovsdb = ovsdb_file_read(db_file_name, rw);
     struct json *request = parse_json(transaction);
-    struct json *result = ovsdb_execute(ovsdb, NULL, request, false,
-                                        rbac_role, NULL, 0, NULL);
+
+    pDbFnTable->pfn_db_add_db_to_context(pDbIntfContext, ovsdb);
+    struct json *result = ovsdb_execute(pDbFnTable, pDbIntfContext, request,
+                                        false, rbac_role, NULL, 0, NULL);
     json_destroy(request);
 
     print_and_free_json(result);

@@ -1479,6 +1479,19 @@ do_execute__(struct ovs_cmdl_context *ctx, bool ro)
     struct json *json;
     struct ovsdb *db;
     int i;
+    DB_FUNCTION_TABLE *pDbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pDbIntfContext = NULL;
+    uint32_t ret_error = 0;
+
+    ret_error = db_provider_init(&pDbFnTable);
+    if (ret_error) {
+        ovs_fatal(ret_error, "Unable to initialize provider");
+    }
+    ret_error = pDbFnTable->pfn_db_open_context(&pDbIntfContext, 0);
+    if (ret_error) {
+        db_provider_shutdown(pDbFnTable);
+        ovs_fatal(ret_error, "Failed to fetch context");
+    }
 
     /* Create database. */
     json = parse_json(ctx->argv[1]);
@@ -1486,12 +1499,15 @@ do_execute__(struct ovs_cmdl_context *ctx, bool ro)
     json_destroy(json);
     db = ovsdb_create(schema, ovsdb_storage_create_unbacked());
 
+    pDbFnTable->pfn_db_add_db_to_context(pDbIntfContext, db);
+
     for (i = 2; i < ctx->argc; i++) {
         struct json *params, *result;
         char *s;
 
         params = parse_json(ctx->argv[i]);
-        result = ovsdb_execute(db, NULL, params, ro,  NULL, NULL, 0, NULL);
+        result = ovsdb_execute(pDbFnTable, pDbIntfContext, params, ro,  NULL,
+                               NULL, 0, NULL);
         s = json_to_string(result, JSSF_SORT);
         printf("%s\n", s);
         free(s);
@@ -1545,6 +1561,19 @@ do_trigger(struct ovs_cmdl_context *ctx)
     long long int now;
     int number;
     int i;
+    DB_FUNCTION_TABLE *pDbFnTable = NULL;
+    PDB_INTERFACE_CONTEXT_T pDbIntfContext = NULL;
+    uint32_t ret_error = 0;
+
+    ret_error = db_provider_init(&pDbFnTable);
+    if (ret_error) {
+        ovs_fatal(ret_error, "Unable to initialize provider");
+    }
+    ret_error = pDbFnTable->pfn_db_open_context(&pDbIntfContext, 0);
+    if (ret_error) {
+        db_provider_shutdown(pDbFnTable);
+        ovs_fatal(ret_error, "Failed to fetch context");
+    }
 
     /* Create database. */
     json = parse_json(ctx->argv[1]);
@@ -1558,6 +1587,7 @@ do_trigger(struct ovs_cmdl_context *ctx)
 
     now = 0;
     number = 0;
+    // TODO trigger tests fail because we don't have JSONRPC Session
     for (i = 2; i < ctx->argc; i++) {
         struct json *params = parse_json(ctx->argv[i]);
         if (params->type == JSON_ARRAY
@@ -1569,7 +1599,8 @@ do_trigger(struct ovs_cmdl_context *ctx)
             json_destroy(params);
         } else {
             struct test_trigger *t = xmalloc(sizeof *t);
-            ovsdb_trigger_init(&session, db, &t->trigger,
+            ovsdb_trigger_init(pDbFnTable, pDbIntfContext, &session, db,
+                               &t->trigger,
                                jsonrpc_create_request("transact", params,
                                                       NULL),
                                now, false, NULL, NULL);
@@ -1581,12 +1612,12 @@ do_trigger(struct ovs_cmdl_context *ctx)
             }
         }
 
-        ovsdb_trigger_run(db, now);
+        ovsdb_trigger_run(pDbFnTable, pDbIntfContext, db, now);
 
         struct test_trigger *t;
         LIST_FOR_EACH_POP (t, trigger.node, &session.completions) {
             do_trigger_dump(t, now, "delayed");
-            ovsdb_trigger_run(db, now);
+            ovsdb_trigger_run(pDbFnTable, pDbIntfContext, db, now);
         }
 
         ovsdb_trigger_wait(db, now);

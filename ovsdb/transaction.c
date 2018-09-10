@@ -978,34 +978,18 @@ ovsdb_txn_propose_commit(struct ovsdb_txn *txn, bool durable)
  * **In addition**, this function also completes or aborts the transaction if
  * the transaction succeeded or failed, respectively. */
 struct ovsdb_error * OVS_WARN_UNUSED_RESULT
-ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
+ovsdb_txn_propose_commit_block(DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext, struct ovsdb_txn *txn, bool durable)
 {
     /* TODO change this to call the interface */
     uint32_t ret_error = 0;
 
-    DB_FUNCTION_TABLE *pOvsdbFnTable = NULL;
-    PDB_INTERFACE_CONTEXT_T pOvsdbIntfContext = NULL;
-
-    ret_error = db_provider_init(&pOvsdbFnTable);
-    if (ret_error) {
-        VLOG_ERR("Unable to initialize provider: %d", ret_error);
-        return false;
-    }
-    ret_error = pOvsdbFnTable->pfn_db_open_context(&pOvsdbIntfContext,
-        NULL, NULL, false, NULL);
-    if (ret_error) {
-        VLOG_ERR("Unable to fetch context here: %d", ret_error);
-        db_provider_shutdown(pOvsdbFnTable);
-        return false;
-    }
-
-    struct ovsdb_txn_progress *p = pOvsdbFnTable->pfn_db_txn_propose_commit(
-        pOvsdbIntfContext, txn, durable);
+    struct ovsdb_txn_progress *p = pDbFnTable->pfn_db_txn_propose_commit(
+        pContext, txn, durable);
     for (;;) {
         ovsdb_storage_run(p->storage);
         /* TODO change this to call the interface */
-        if (pOvsdbFnTable->pfn_db_txn_progress_is_complete(pOvsdbIntfContext,
-            p)) {
+        if (pDbFnTable->pfn_db_txn_progress_is_complete(pContext, p)) {
             struct ovsdb_error *error
                 = ovsdb_error_clone(ovsdb_txn_progress_get_error(p));
             /* TODO change this to call the interface */
@@ -1016,9 +1000,6 @@ ovsdb_txn_propose_commit_block(struct ovsdb_txn *txn, bool durable)
             } else {
                 ovsdb_txn_complete(txn);
             }
-
-            pOvsdbFnTable->pfn_db_close_context(pOvsdbIntfContext);
-            db_provider_shutdown(pOvsdbFnTable);
             return error;
         }
         ovsdb_storage_wait(p->storage);

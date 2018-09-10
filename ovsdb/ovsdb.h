@@ -21,6 +21,7 @@
 #include "openvswitch/list.h"
 #include "openvswitch/shash.h"
 #include "openvswitch/uuid.h"
+#include "ovsdb-intf.h"
 
 struct json;
 struct ovsdb_log;
@@ -95,7 +96,7 @@ struct ovsdb_txn *ovsdb_execute_compose(
     long long int elapsed_msec, long long int *timeout_msec,
     bool *durable, struct json **);
 
-struct json *ovsdb_execute(struct ovsdb *, const struct ovsdb_session *,
+struct json *ovsdb_execute(DB_FUNCTION_TABLE *pDbFnTable, PDB_INTERFACE_CONTEXT_T pContext,
                            const struct json *params, bool read_only,
                            const char *role, const char *id,
                            long long int elapsed_msec,

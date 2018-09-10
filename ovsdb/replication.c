@@ -47,9 +47,13 @@ static struct jsonrpc_msg *create_monitor_request(struct ovsdb *db);
 static void add_monitored_table(struct ovsdb_table_schema *table,
                                 struct json *monitor_requests);
 
-static struct ovsdb_error *reset_database(struct ovsdb *db);
+static struct ovsdb_error *reset_database(DB_FUNCTION_TABLE *pDbFnTable,
+                                          PDB_INTERFACE_CONTEXT_T pContext,
+                                          struct ovsdb *db);
 
-static struct ovsdb_error *process_notification(struct json *, struct ovsdb *);
+static struct ovsdb_error *process_notification(DB_FUNCTION_TABLE *pDbFnTable,
+                                            PDB_INTERFACE_CONTEXT_T pContext,
+                                            struct json *, struct ovsdb *);
 static struct ovsdb_error *process_table_update(struct json *table_update,
                                                 const char *table_name,
                                                 struct ovsdb *database,
@@ -169,7 +173,8 @@ send_schema_requests(const struct json *result)
 }
 
 void
-replication_run(void)
+replication_run(DB_FUNCTION_TABLE *pDbFnTable,
+                PDB_INTERFACE_CONTEXT_T pContext)
 {
     if (!session) {
         return;
@@ -209,7 +214,8 @@ replication_run(void)
                 struct ovsdb *db = find_db(db_name);
                 if (db) {
                     struct ovsdb_error *error;
-                    error = process_notification(msg->params->array.elems[1],
+                    error = process_notification(pDbFnTable, pContext,
+                                                 msg->params->array.elems[1],
                                                  db);
                     if (error) {
                         ovsdb_error_assert(error);
@@ -303,7 +309,7 @@ replication_run(void)
 
                     SHASH_FOR_EACH_SAFE (node, next, replication_dbs) {
                         db = node->data;
-                        error = reset_database(db);
+                        error = reset_database(pDbFnTable, pContext, db);
                         if (error) {
                             const char *db_name = db->schema->name;
                             shash_find_and_delete(replication_dbs, db_name);
@@ -335,7 +341,8 @@ replication_run(void)
             case RPL_S_MONITOR_REQUESTED: {
                 /* Reply to monitor requests. */
                 struct ovsdb_error *error;
-                error = process_notification(msg->result, db);
+                error = process_notification(pDbFnTable, pContext, msg->result,
+                    db);
                 if (error) {
                     ovsdb_error_assert(error);
                     state = RPL_S_ERR;
@@ -519,7 +526,9 @@ find_db(const char *db_name)
 }
 
 static struct ovsdb_error *
-reset_database(struct ovsdb *db)
+reset_database(DB_FUNCTION_TABLE *pDbFnTable,
+               PDB_INTERFACE_CONTEXT_T pContext,
+               struct ovsdb *db)
 {
     struct ovsdb_txn *txn = ovsdb_txn_create(db);
     struct shash_node *table_node;
@@ -535,7 +544,7 @@ reset_database(struct ovsdb *db)
         }
     }
 
-    return ovsdb_txn_propose_commit_block(txn, false);
+    return ovsdb_txn_propose_commit_block(pDbFnTable, pContext, txn, false);
 }
 
 /* Create a monitor request for 'db'. The monitor request will include
@@ -589,7 +598,9 @@ add_monitored_table(struct ovsdb_table_schema *table,
 
 
 static struct ovsdb_error *
-process_notification(struct json *table_updates, struct ovsdb *db)
+process_notification(DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext, struct json *table_updates,
+    struct ovsdb *db)
 {
     struct ovsdb_error *error = NULL;
     struct ovsdb_txn *txn;
@@ -614,7 +625,8 @@ process_notification(struct json *table_updates, struct ovsdb *db)
             return error;
         } else {
             /* Commit transaction. */
-            error = ovsdb_txn_propose_commit_block(txn, false);
+            error = ovsdb_txn_propose_commit_block(pDbFnTable, pContext, txn,
+                false);
         }
     }
 

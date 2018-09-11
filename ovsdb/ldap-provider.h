@@ -9,16 +9,44 @@
 #include <stdarg.h>
 
 
+#include "column.h"
+#include "file.h"
+#include "jsonrpc.h"
+#include "jsonrpc-server.h"
+#include "memory.h"
 #include "ovsdb.h"
+#include "ovsdb-condition.h"
+#include "ovsdb-data.h"
+#include "ovsdb-error.h"
 #include "ovsdb-intf.h"
+#include "ovsdb-types.h"
+#include "openvswitch/dynamic-string.h"
 #include "openvswitch/json.h"
-#include "transaction.h"
-#include "util.h"
 #include "openvswitch/vlog.h"
+#include "row.h"
+#include "ovsdb-util.h"
+#include "replication.h"
+#include "simap.h"
+#include "socket-util.h"
+#include "storage.h"
+#include "stream-ssl.h"
+#include "table.h"
+#include "timeval.h"
+#include "transaction.h"
+#include "trigger.h"
+#include "util.h"
+#include "unixctl.h"
 #include "jsonrpc-server.h"
 #include "monitor.h"
 #include "ovsdb-parser.h"
-#include "ovsdb-types.h"
+#include "perf-counter.h"
+#include "uuid.h"
+
+struct db {
+    char *filename;
+    struct ovsdb *db;
+    struct uuid row_uuid;
+};
 
 #define OVS_SAFE_FREE_STRING(pStr) \
         if ((pStr)) { \
@@ -320,7 +348,43 @@ typedef struct _DB_INTERFACE_CONTEXT_T {
     bool read_only;
     /** @brief session maintained by the JSONRPC server */
     struct ovsdb_jsonrpc_session *jsonrpc_session;
+    struct server_config *server_cfg;
+    bool *exiting;
 } DB_INTERFACE_CONTEXT_T;
+
+typedef enum _OVS_COLUMN_TYPE {
+    OVS_COLUMN_DEFAULT,
+    OVS_COLUMN_UUID,
+    OVS_COLUMN_STRING,
+    OVS_COLUMN_BOOLEAN,
+    OVS_COLUMN_SET,
+    OVS_COLUMN_MAP,
+    OVS_COLUMN_INTEGER
+} OVS_COLUMN_TYPE;
+
+
+struct ovs_clause {
+    const char *column_name;
+    enum ovsdb_function function;
+    struct ovsdb_datum *value;
+};
+
+struct ovs_condition {
+    struct ovs_clause *ovs_clauses;
+    size_t n_clauses;
+};
+
+struct ovs_column {
+    char * ldap_column_name;
+    const OVS_COLUMN_TYPE column_type;
+    char * ovsdb_column_name;
+    const struct ovsdb_type * pcolumn_ovsdb_type;
+};
+
+struct ovs_column_set {
+    struct ovs_column * ovs_columns;
+    size_t n_columns;
+};
 
 void
 OvsFreeConnection(
@@ -420,7 +484,7 @@ OvsLdapAddImpl(
 );
 
 uint32_t
-ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, ...);
+ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, int argc, ...);
 
 uint32_t
 ldap_close_context(DB_INTERFACE_CONTEXT_T *pContext);
@@ -428,6 +492,7 @@ ldap_close_context(DB_INTERFACE_CONTEXT_T *pContext);
 struct ovsdb_txn *
 ldap_execute_compose_intf(
     PDB_INTERFACE_CONTEXT_T pContext,
+    bool read_only,
     const struct json *params,
     const char *role,
     const char *id,
@@ -444,7 +509,8 @@ ldap_txn_propose_commit_intf(
     bool durable
 );
 
-bool ldap_txn_progress_is_complete_intf(PDB_INTERFACE_CONTEXT_T pContext,
+bool
+ldap_txn_progress_is_complete_intf(PDB_INTERFACE_CONTEXT_T pContext,
     const struct ovsdb_txn_progress *p);
 
 
@@ -460,12 +526,92 @@ struct jsonrpc_msg *
 ldap_monitor_cancel_intf(PDB_INTERFACE_CONTEXT_T pContext,
     struct json_array *params, struct json *id);
 
+uint32_t
+ldap_initialize_state_intf(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct sset *remotes,
+    FILE *config_tmpfile,
+    struct shash *all_dbs,
+    struct ovsdb_jsonrpc_server *jsonrpc,
+    char **sync_from,
+    char **sync_exclude,
+    bool *is_backup,
+    struct sset *db_filenames,
+    bool *exiting,
+    struct server_config *server_cfg
+);
+
+uint32_t
+ldap_setup_ssl_configuration_intf(
+    char *private_key_file,
+    char *certificate_file,
+    char *ca_cert_file,
+    char *ssl_protocols,
+    char *ssl_ciphers,
+    bool bootstrap_ca_cert
+);
+
+uint32_t
+ldap_unixctl_cmd_register_intf(
+    PDB_INTERFACE_CONTEXT_T pContext
+);
+
+uint32_t
+ldap_memory_usage_report_intf(
+    PDB_INTERFACE_CONTEXT_T pContext
+);
+
+uint32_t
+ldap_process_rpc_requests_intf(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    DB_FUNCTION_TABLE *pDbFnTable
+);
+
+uint32_t
+ldap_update_servers_and_wait_intf(
+    DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct unixctl_server *unixctl,
+    struct process *run_process
+);
+
+uint32_t
+ldap_terminate_state_intf(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct sset *db_filenames
+);
+
+uint32_t
+ldap_add_session_to_context_intf(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb_jsonrpc_session *s,
+    struct jsonrpc_msg *request,
+    bool monitor_cond_enable__,
+    struct jsonrpc_msg **reply
+);
+
+uint32_t
+ldap_create_trigger_intf(
+    DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct jsonrpc_msg *request
+);
+
+uint32_t
+ldap_add_db_to_context_intf(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb *ovsdb
+);
+
 /** Following functions are useful for implementing data operations on DNs */
 typedef uint32_t FN_LDAP_OPERATION (
     PDB_INTERFACE_CONTEXT_T,
     struct ovsdb_parser *,
-    struct json *
+    struct json *,
+    const struct ovs_column_set *
 );
+
+typedef struct ovs_column_set FN_LDAP_GET_OVS_COLUMN_SET (void);
 
 typedef struct __LDAP_FUNCTION_TABLE
 {
@@ -473,25 +619,9 @@ typedef struct __LDAP_FUNCTION_TABLE
     FN_LDAP_OPERATION *pfn_ldap_select;
     FN_LDAP_OPERATION *pfn_ldap_delete;
     FN_LDAP_OPERATION *pfn_ldap_update;
+    FN_LDAP_GET_OVS_COLUMN_SET *pfn_ldap_get_column_set;
 } LDAP_FUNCTION_TABLE;
 
 typedef LDAP_FUNCTION_TABLE LDAP_FUNCTION_TABLE_INIT (void);
-
-typedef enum _OVS_COLUMN_TYPE {
-    OVS_COLUMN_UUID,
-    OVS_COLUMN_STRING,
-    OVS_COLUMN_BOOLEAN,
-    OVS_COLUMN_SET,
-    OVS_COLUMN_MAP,
-    OVS_COLUMN_INTEGER
-} OVS_COLUMN_TYPE;
-
-struct ovs_column {
-    char *ldap_column_name;
-    OVS_COLUMN_TYPE column_type;
-    LDAPMod *pLDAPMod;
-    char *ovsdb_column_name;
-    const struct ovsdb_type *pcolumn_ovsdb_type;
-};
 
 #endif /* LDAP_PROVIDER_H */

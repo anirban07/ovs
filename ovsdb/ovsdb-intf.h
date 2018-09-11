@@ -12,13 +12,28 @@
 
 // #define JSON_RPC_DEBUG
 
+// #include "jsonrpc-server.h"
 #include "openvswitch/json.h"
+#include "process.h"
+#include "sset.h"
+#include "unixctl.h"
+
+struct server_config {
+    struct sset *remotes;
+    struct shash *all_dbs;
+    FILE *config_tmpfile;
+    char **sync_from;
+    char **sync_exclude;
+    bool *is_backup;
+    struct ovsdb_jsonrpc_server *jsonrpc;
+};
 
 enum ovsdb_monitor_version;
 struct ovsdb;
 struct ovsdb_jsonrpc_session;
 struct ovsdb_session;
 enum ovsdb_lock_mode;
+struct __DB_FUNCTION_TABLE;
 
 /**
  * @brief structure object that contains the backend specific structure. This
@@ -36,6 +51,7 @@ typedef struct _DB_INTERFACE_CONTEXT_T * PDB_INTERFACE_CONTEXT_T;
  */
 typedef uint32_t (*PFN_DB_OPEN_CONTEXT) (
     PDB_INTERFACE_CONTEXT_T * ppContext,
+    int argc,
     ...
 );
 
@@ -60,6 +76,7 @@ typedef uint32_t (*PFN_DB_OPEN_CONTEXT) (
  */
 typedef struct ovsdb_txn * (*PFN_DB_EXECUTE_COMPOSE)(
     PDB_INTERFACE_CONTEXT_T pContext,
+    bool read_only,
     const struct json *params,
     const char *role,
     const char *id,
@@ -284,6 +301,85 @@ typedef void (*PFN_DB_CONVERT) (
     // args to be decided
 );
 
+/**
+ * @brief setup SSL configuration
+ */
+typedef uint32_t (*PFN_DB_SETUP_SSL_CONFIGURATION) (
+    char *private_key_file,
+    char *certificate_file,
+    char *ca_cert_file,
+    char *ssl_protocols,
+    char *ssl_ciphers,
+    bool bootstrap_ca_cert
+);
+
+/**
+ * initialize the state of the OVSDB server
+ */
+typedef uint32_t (*PFN_DB_INITIALIZE_STATE) (
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct sset *remotes,
+    FILE *config_tmpfile,
+    struct shash *all_dbs,
+    struct ovsdb_jsonrpc_server *jsonrpc,
+    char **sync_from,
+    char **sync_exclude,
+    bool *is_backup,
+    struct sset *db_filenames,
+    bool *exiting,
+    struct server_config *server_cfg
+);
+
+/** @brief register the CTL commands */
+typedef uint32_t (*PFN_DB_UNIXCTL_CMD_REGISTER) (
+    PDB_INTERFACE_CONTEXT_T pContext
+);
+
+typedef uint32_t (*PFN_DB_MEMORY_USAGE_REPORT) (
+    PDB_INTERFACE_CONTEXT_T pContext
+);
+
+/** @brief process RPC request */
+typedef uint32_t (*PFN_DB_PROCESS_RPC_REQUESTS)(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct __DB_FUNCTION_TABLE *pDbFnTable
+);
+
+typedef uint32_t (*PFN_DB_UPDATE_SERVERS_AND_WAIT)(
+    struct __DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct unixctl_server *unixctl,
+    struct process *run_process
+);
+
+typedef uint32_t (*PFN_DB_TERMINATE_STATE)(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct sset *db_filenames
+);
+
+typedef uint32_t (*PFN_DB_ADD_SESSION_TO_CONTEXT)(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb_jsonrpc_session *session,
+    struct jsonrpc_msg *request,
+    bool monitor_cond_enable__,
+    struct jsonrpc_msg **reply
+);
+
+typedef uint32_t (*PFN_DB_ADD_DB_TO_CONTEXT)(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb *ovsdb
+);
+
+typedef uint32_t (*PFN_DB_ADD_DB_TO_CONTEXT_INTF)(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb *ovsdb
+);
+
+typedef uint32_t (*PFN_DB_CREATE_TRIGGER)(
+    struct __DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct jsonrpc_msg *request
+);
 
 typedef uint32_t (*PFN_DB_CLOSE_CONTEXT) (
     PDB_INTERFACE_CONTEXT_T pContext
@@ -324,6 +420,26 @@ typedef struct __DB_FUNCTION_TABLE
     PFN_DB_SET_CHANGE_AWARE pfn_db_set_change_aware;
     /** @brief to patch and update the database metadata */
     PFN_DB_CONVERT pfn_db_convert;
+    /** @brief initialize the state of OVSDB */
+    PFN_DB_INITIALIZE_STATE pfn_db_initialize_state;
+    /** @brief setup SSL configuration */
+    PFN_DB_SETUP_SSL_CONFIGURATION pfn_db_setup_ssl_configuration;
+    /** @brief register the CTL commands */
+    PFN_DB_UNIXCTL_CMD_REGISTER pfn_db_unixctl_cmd_register;
+    /** @brief report memory usage */
+    PFN_DB_MEMORY_USAGE_REPORT pfn_db_memory_usage_report;
+    /** @brief process RPC requests */
+    PFN_DB_PROCESS_RPC_REQUESTS pfn_db_process_rpc_requests;
+    /** @brief update the other servers and wait for completion */
+    PFN_DB_UPDATE_SERVERS_AND_WAIT pfn_db_update_servers_and_wait;
+    /** @brief terminate state of OVSDB */
+    PFN_DB_TERMINATE_STATE pfn_db_terminate_state;
+    /** @brief add session object to context */
+    PFN_DB_ADD_SESSION_TO_CONTEXT pfn_db_add_session_to_context;
+    /** @brief add DB to context */
+    PFN_DB_ADD_DB_TO_CONTEXT pfn_db_add_db_to_context;
+    /** @brief create trigger */
+    PFN_DB_CREATE_TRIGGER pfn_db_create_trigger;
     /** @brief to destroy the context required by the backend */
     PFN_DB_CLOSE_CONTEXT pfn_db_close_context;
 } DB_FUNCTION_TABLE;

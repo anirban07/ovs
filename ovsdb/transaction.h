@@ -18,6 +18,7 @@
 
 #include <stdbool.h>
 #include "compiler.h"
+#include "ovsdb-intf.h"
 
 struct json;
 struct ovsdb;
@@ -32,7 +33,9 @@ struct ovsdb_error *ovsdb_txn_replay_commit(struct ovsdb_txn *)
 struct ovsdb_txn_progress *ovsdb_txn_propose_commit(struct ovsdb_txn *,
                                                     bool durable)
     OVS_WARN_UNUSED_RESULT;
-struct ovsdb_error *ovsdb_txn_propose_commit_block(struct ovsdb_txn *,
+struct ovsdb_error *ovsdb_txn_propose_commit_block(DB_FUNCTION_TABLE *,
+                                                   PDB_INTERFACE_CONTEXT_T,
+                                                   struct ovsdb_txn *,
                                                    bool durable)
     OVS_WARN_UNUSED_RESULT;
 void ovsdb_txn_complete(struct ovsdb_txn *);

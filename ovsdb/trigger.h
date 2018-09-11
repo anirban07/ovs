@@ -16,6 +16,7 @@
 #ifndef OVSDB_TRIGGER_H
 #define OVSDB_TRIGGER_H 1
 
+#include "ovsdb-intf.h"
 #include "openvswitch/list.h"
 
 struct ovsdb;
@@ -56,7 +57,9 @@ struct ovsdb_trigger {
     char *id;                   /* ID, for role-based access controls. */
 };
 
-bool ovsdb_trigger_init(struct ovsdb_session *, struct ovsdb *,
+bool ovsdb_trigger_init(DB_FUNCTION_TABLE *pDbFnTable,
+                        PDB_INTERFACE_CONTEXT_T pContext,
+                        struct ovsdb_session *, struct ovsdb *,
                         struct ovsdb_trigger *,
                         struct jsonrpc_msg *request, long long int now,
                         bool read_only, const char *role, const char *id);
@@ -68,7 +71,8 @@ void ovsdb_trigger_cancel(struct ovsdb_trigger *, const char *reason);
 
 void ovsdb_trigger_prereplace_db(struct ovsdb_trigger *);
 
-bool ovsdb_trigger_run(struct ovsdb *, long long int now);
+bool ovsdb_trigger_run(DB_FUNCTION_TABLE *pDbFnTable,
+    PDB_INTERFACE_CONTEXT_T pContext, struct ovsdb *, long long int now);
 void ovsdb_trigger_wait(struct ovsdb *, long long int now);
 
 #endif /* ovsdb/trigger.h */

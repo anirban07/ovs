@@ -296,11 +296,12 @@ struct db {
 #define OVSDB_UUID "uuid"
 #define OVSDB_VIPS "vips"
 
-#define KEY_SEP "<:>"
-#define ENTRY_SEP "<>"
+#define KEY_SEP ':'
+#define ENTRY_SEP ' '
 #define LDAP_DEFAULT_STRING "null"
 #define LDAP_DEFAULT_BOOLEAN false
 #define LDAP_DEFAULT_INTEGER 0
+#define LDAP_OBJECT_IDENTIFIER "-obj"
 
 typedef struct _ovs_ldap_context_t {
     LDAP *pLd;
@@ -364,9 +365,10 @@ typedef enum _OVS_COLUMN_TYPE {
 
 
 struct ovs_clause {
-    const char *column_name;
+    const char *ovsdb_column_name;
     enum ovsdb_function function;
     struct ovsdb_datum *value;
+    const char *ldap_column_name;
 };
 
 struct ovs_condition {
@@ -481,6 +483,17 @@ OvsLdapAddImpl(
     char *pDn,
     char *bucket,
     char *pUuid
+);
+
+uint32_t
+OvsLdapSearchImpl(
+    ovs_ldap_context_t *pConnection,
+    char *pDn,
+    char *bucket,
+    const struct ovs_column_set *povs_column_set,
+    struct ovs_condition *povs_condition,
+    struct sset *desired_ovsdb_columns,
+    struct json **ppresult_rows
 );
 
 uint32_t

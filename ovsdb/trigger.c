@@ -50,7 +50,7 @@ ovsdb_trigger_init(DB_FUNCTION_TABLE *pDbFnTable,
                    struct jsonrpc_msg *request, long long int now,
                    bool read_only, const char *role, const char *id)
 {
-    VLOG_INFO("PT: Trigger INIT start!");
+    // VLOG_INFO("PT: Trigger INIT start!");
     ovs_assert(!strcmp(request->method, "transact") ||
                !strcmp(request->method, "convert"));
     trigger->session = session;
@@ -64,7 +64,7 @@ ovsdb_trigger_init(DB_FUNCTION_TABLE *pDbFnTable,
     trigger->read_only = read_only;
     trigger->role = nullable_xstrdup(role);
     trigger->id = nullable_xstrdup(id);
-    VLOG_INFO("PT: Trigger INIT done!");
+    // VLOG_INFO("PT: Trigger INIT done!");
     return ovsdb_trigger_try(pDbFnTable, pContext, trigger, now);
 }
 
@@ -149,7 +149,7 @@ ovsdb_trigger_run(DB_FUNCTION_TABLE *pDbFnTable,
     PDB_INTERFACE_CONTEXT_T pContext, struct ovsdb *db, long long int now)
 {
     struct ovsdb_trigger *t, *next;
-    VLOG_INFO("PT: Trigger run start!");
+    // VLOG_INFO("PT: Trigger run start!");
 
     bool run_triggers = db->run_triggers;
     db->run_triggers = false;
@@ -165,7 +165,7 @@ ovsdb_trigger_run(DB_FUNCTION_TABLE *pDbFnTable,
             }
         }
     }
-    VLOG_INFO("PT: Trigger run done!");
+    // VLOG_INFO("PT: Trigger run done!");
     return disconnect_all;
 }
 
@@ -202,7 +202,7 @@ static bool ovsdb_trigger_try(DB_FUNCTION_TABLE *pDbFnTable,
 {
     /* Handle "initialized" state. */
 
-    VLOG_INFO("PT: Trigger Try start!");
+    // VLOG_INFO("PT: Trigger Try start!");
     uint32_t ret_error = 0;
     if (!t->reply) {
         ovs_assert(!t->progress);
@@ -214,11 +214,11 @@ static bool ovsdb_trigger_try(DB_FUNCTION_TABLE *pDbFnTable,
 
             struct json *result;
 
-            VLOG_INFO("PT: Trigger execute compose!");
+            // VLOG_INFO("PT: Trigger execute compose!");
             txn = pDbFnTable->pfn_db_execute_compose(pContext, t->read_only,
                 t->request->params, t->role, t->id, now - t->created,
                 &t->timeout_msec, &durable, &result);
-            VLOG_INFO("PT: Trigger execute compose done!");
+            // VLOG_INFO("PT: Trigger execute compose done!");
             if (!txn) {
                 if (result) {
                     /* Complete.  There was an error but we still represent it
@@ -232,13 +232,13 @@ static bool ovsdb_trigger_try(DB_FUNCTION_TABLE *pDbFnTable,
             }
 
             /* Transition to "committing" state. */
-            VLOG_INFO("PT: Trigger create reply!");
+            // VLOG_INFO("PT: Trigger create reply!");
             t->reply = jsonrpc_create_reply(result, t->request->id);
             /* TODO change this to call the interface */
-            VLOG_INFO("PT: Trigger propose commit!");
+            // VLOG_INFO("PT: Trigger propose commit!");
             t->progress = pDbFnTable->pfn_db_txn_propose_commit(pContext, txn,
                 durable);
-            VLOG_INFO("PT: Trigger propose commit done!");
+            // VLOG_INFO("PT: Trigger propose commit done!");
         } else if (!strcmp(t->request->method, "convert")) {
             /* Permission check. */
             if (t->role && *t->role) {
@@ -299,7 +299,7 @@ static bool ovsdb_trigger_try(DB_FUNCTION_TABLE *pDbFnTable,
          * transactions that we write (which is an ugly broken abstraction but
          * it's what we have). */
         /* TODO change this to call the interface */
-        VLOG_INFO("PT: Trigger progress complete!");
+        // VLOG_INFO("PT: Trigger progress complete!");
         if (pDbFnTable->pfn_db_txn_progress_is_complete(pContext,
             t->progress) && !ovsdb_txn_progress_get_error(t->progress)) {
             if (txn) {

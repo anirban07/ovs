@@ -463,7 +463,7 @@ json_clone_object(const struct shash *object)
     json = json_object_create();
     SHASH_FOR_EACH (node, object) {
         struct json *value = node->data;
-        json_object_put(json, node->name, json_clone(value));
+        json_object_put(json, node->name, json_deep_clone(value));
     }
     return json;
 }
@@ -476,7 +476,7 @@ json_clone_array(const struct json_array *array)
 
     elems = xmalloc(array->n * sizeof *elems);
     for (i = 0; i < array->n; i++) {
-        elems[i] = json_clone(array->elems[i]);
+        elems[i] = json_deep_clone(array->elems[i]);
     }
     return json_array_create(elems, array->n);
 }

@@ -126,6 +126,13 @@ commit_txn(DB_FUNCTION_TABLE *pDbFnTable, PDB_INTERFACE_CONTEXT_T pContext,
     struct ovsdb_txn *txn, const char *name);
 static void
 update_database_status(struct ovsdb_row *row, struct db *db);
+static struct json *
+aggregate_transact(const struct json *params, size_t n_operations,
+    struct json **results);
+static char *
+get_ldap_cn_from_table(
+    const char *parent_table
+);
 
 static
 int
@@ -1632,6 +1639,45 @@ nb_north_bound_init(void) {
     return ldap_fn_table;
 }
 
+static char *
+get_ldap_cn_from_table(
+    const char *parent_table
+) {
+    struct mapper {
+        char *table_name;
+        char *ldap_cn;
+    };
+
+    struct mapper map[] = {
+        {NB_GLOBAL, NB_GLOBAL_OBJ_CLASS_NAME},
+        {CONNECTION, NB_CONN_OBJ_CLASS_NAME},
+        {SSL, NB_SSL_OBJ_CLASS_NAME},
+        {ADDRESS_SET, NB_ADDRESS_SET_OBJ_CLASS_NAME},
+        {LOGICAL_ROUTER, NB_LOGICAL_RT_OBJ_CLASS_NAME},
+        {LOGICAL_ROUTER_PORT, NB_LOGICAL_RT_PORT_OBJ_CLASS_NAME},
+        {LOGICAL_ROUTER_STATIC_ROUTE, NB_LOGICAL_RT_STATIC_OBJ_CLASS_NAME},
+        {LOAD_BALANCER, NB_LB_OBJ_CLASS_NAME},
+        {LOGICAL_SWITCH, NB_LOGICAL_SW_OBJ_CLASS_NAME},
+        {LOGICAL_SWITCH_PORT, NB_LOGICAL_SW_PORT_OBJ_CLASS_NAME},
+        {DHCP_OPTIONS, NB_DHCP_OBJ_CLASS_NAME},
+        {QOS, NB_QOS_OBJ_CLASS_NAME},
+        {DNS, NB_DNS_RECORDS_OBJ_CLASS_NAME},
+        {ACL, NB_ACL_OBJ_CLASS_NAME},
+        {NAT, NB_NAT_OBJ_CLASS_NAME},
+        {GATEWAY_CHASSIS, NB_GW_CHASSIS_OBJ_CLASS_NAME}
+    };
+
+    int table_count = sizeof(map) / sizeof(struct mapper);
+    int i;
+
+    for (i=0; i<table_count; i++) {
+        if (!strcmp(parent_table, map[i].table_name)) {
+            return map[i].ldap_cn;
+        }
+    }
+
+    return NULL;
+}
 
 static uint32_t
 nb_ldap_insert_helper(
@@ -1644,11 +1690,17 @@ nb_ldap_insert_helper(
     size_t i;
     static uint32_t error = 0;
     const struct json *row_json;
+    const struct json *parent_json;
+    struct json *json;
+    const char *parent_uuid;
+    const char *parent_table;
+    char *parent_cn;
     struct ovsdb_error *ovsdb_error = NULL;
 
     LDAPMod **attrs = NULL;
 
     row_json = ovsdb_parser_member(parser, "row", OP_OBJECT);
+    parent_json = ovsdb_parser_member(parser, "parent", OP_OBJECT);
     ovsdb_error = ovsdb_parser_get_error(parser);
     if (ovsdb_error) {
         error = ovsdb_error->errno_;
@@ -1669,12 +1721,30 @@ nb_ldap_insert_helper(
             uuid = attrs[i]->mod_vals.modv_strvals[0];
         }
     }
+    BAIL_ON_ERROR(error);
+
     char *pDn = NULL;
     GetDSERootAttribute(
         pContext->ldap_conn->pLd,
         DEFAULT_NAMING_CONTEXT,
         &pDn
     );
+
+    if (parent_json) {
+        json = shash_find_data(parent_json->object, "uuid");
+        if (json) {
+            parent_uuid = json_string(json);
+            json = shash_find_data(parent_json->object, "table");
+            parent_table = json_string(json);
+            parent_cn = get_ldap_cn_from_table(parent_table);
+            char *pNewDn = NULL;
+            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s,cn=%s,%s",
+                parent_uuid, parent_cn, pDn);
+            BAIL_ON_ERROR(error);
+            OVS_SAFE_FREE_STRING(pDn);
+            pDn = pNewDn;
+        }
+    }
     error = OvsLdapAddImpl(
         pContext->ldap_conn,
         attrs,
@@ -3898,8 +3968,11 @@ ldap_execute_compose_intf(
     if (txn != NULL) {
         n_operations = params->array.n - 1;
 
+        struct json *aggr_params = NULL;
+        aggr_params = aggregate_transact(params, n_operations, resultsp);
+        n_operations = aggr_params->array.n - 1;
         for (i = 1; i <= n_operations; i++) {
-            struct json *operation = params->array.elems[i];
+            struct json *operation = aggr_params->array.elems[i];
             const struct json *op;
             struct json *result;
             LDAP_FUNCTION_TABLE ldap_obj_fn_table;
@@ -3942,6 +4015,7 @@ ldap_execute_compose_intf(
             }
             json_array_add(results, result);
         }
+        json_destroy(aggr_params);
     }
 
     return txn;
@@ -3990,6 +4064,125 @@ ldap_monitor_cancel_intf(PDB_INTERFACE_CONTEXT_T pContext,
     return ovsdb_jsonrpc_monitor_cancel(pContext->jsonrpc_session, params, id);
 }
 
+struct json *
+aggregate_transact(const struct json *params, size_t n_operations,
+        struct json **results) {
+    size_t i = 0;
+    size_t ops = 0x0;
+    struct json *update = NULL;
+    struct json *insert = NULL;
+    struct json *wait = NULL;
+    struct json *op = NULL;
+    const char *op_name;
+    char *parent_uuid;
+    struct json *curr_uuid;
+    char *parent_table;
+    struct json *new_param;
+    struct json *json;
+
+#define FOUND_UPDATE (1<<0)
+#define FOUND_INSERT (1<<1)
+#define FOUND_WAIT (1<<2)
+#define NEEDS_AGGREGATE (FOUND_WAIT | FOUND_INSERT | FOUND_UPDATE)
+
+    for (i = 1; i <= n_operations; i++) {
+        struct json *operation = params->array.elems[i];
+        op = shash_find_data(operation->object, "op");
+        if (op) {
+            op_name = json_string(op);
+            if (!strcmp(op_name, "wait")) {
+                if (wait) {
+                    return json_deep_clone(params);
+                }
+                wait = operation;
+                ops |= FOUND_WAIT;
+            } else if (!strcmp(op_name, "insert")) {
+                if (insert) {
+                    return json_deep_clone(params);
+                }
+                insert = operation;
+                ops |= FOUND_INSERT;
+                // NOTE: updating the UUID from the ovsdb
+                curr_uuid = shash_find_data((*results)->array.elems[i - 1]->object, "uuid");
+                if (curr_uuid) {
+                    op = shash_find_data(insert->object, "row");
+                    if (op) {
+                        json_object_put(op, "uuid", /* "uuid-used", */ curr_uuid);
+                    } else {
+                        VLOG_INFO("no row: %s", json_to_string(insert, JSSF_PRETTY));
+                        return json_deep_clone(params);
+                    }
+                } else {
+                    VLOG_INFO("no uuid: %lu, %s", i - 1,
+                        json_to_string((*results)->array.elems[i - 1], JSSF_PRETTY));
+                    return json_deep_clone(params);
+                }
+            } else if (!strcmp(op_name, "update")) {
+                if (update) {
+                    return json_deep_clone(params);
+                }
+                update = operation;
+                ops |= FOUND_UPDATE;
+            }
+        }
+    }
+
+    if (ops != NEEDS_AGGREGATE) {
+        return json_deep_clone(params);
+    }
+
+    op = shash_find_data(update->object, "table");
+    if (!op) {
+        VLOG_INFO("JSON doesn't have 'table': %s", json_to_string(op, JSSF_PRETTY));
+        return json_deep_clone(params);
+    }
+    parent_table = op->string;
+    VLOG_INFO("Parent table is: %s", parent_table);
+
+    op = shash_find_data(update->object, "where");
+    if (!op) {
+        VLOG_INFO("JSON doesn't have 'where': %s", json_to_string(op, JSSF_PRETTY));
+        return json_deep_clone(params);
+    }
+    if (op->array.n != 1) {
+        VLOG_INFO("JSON has multiple where conditions: %s", json_to_string(op, JSSF_PRETTY));
+        return json_deep_clone(params);
+    }
+    op = op->array.elems[0];
+    if (op->array.n != 3) {
+        VLOG_INFO("JSON where condition not size 3: %s", json_to_string(op, JSSF_PRETTY));
+        return json_deep_clone(params);
+    }
+    if (strcmp(op->array.elems[0]->string, "_uuid")) {
+        VLOG_INFO("JSON where condition is not for _uuid: %s", json_to_string(op, JSSF_PRETTY));
+        return json_deep_clone(params);
+    }
+
+    op = op->array.elems[2];
+    if (op->array.n != 2) {
+        VLOG_INFO("JSON where condition entries are not size 2: %s", json_to_string(op, JSSF_PRETTY));
+        return json_deep_clone(params);
+    }
+
+    if (strcmp(op->array.elems[0]->string, "uuid")) {
+        VLOG_INFO("JSON where condition is not for 'uuid': %s", json_to_string(op, JSSF_PRETTY));
+    }
+
+    parent_uuid = op->array.elems[1]->string;
+
+    new_param = json_object_create();
+    json = json_string_create(parent_uuid);
+    json_object_put(new_param, "uuid", json);
+    json = json_string_create(parent_table);
+    json_object_put(new_param, "table", json);
+
+    json = json_deep_clone(insert);
+
+    json_object_put(json, "parent", new_param);
+
+    VLOG_INFO("Updated Insert Query: %s", json_to_string(json, JSSF_PRETTY));
+    return json_array_create_2(json_null_create(), json);
+}
 
 uint32_t
 ldap_initialize_state_intf(
@@ -4460,14 +4653,12 @@ ldap_create_trigger_intf(
 
     /* Insert into trigger table. */
     t = xmalloc(sizeof *t);
-    // VLOG_INFO("PT: should trigger init");
     bool disconnect_all = ovsdb_trigger_init(pDbFnTable, pContext,
         &s->up, db, &t->trigger, request, time_msec(), s->read_only,
         s->remote->role, jsonrpc_session_get_id(s->js));
     t->id = json_clone(request->id);
     hmap_insert(&s->triggers, &t->hmap_node, hash);
 
-    // VLOG_INFO("PT: should trigger complete");
     /* Complete early if possible. */
     if (ovsdb_trigger_is_complete(&t->trigger)) {
         ovsdb_jsonrpc_trigger_complete(t);

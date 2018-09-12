@@ -729,18 +729,12 @@ ovsdb_create_trigger_intf(
 
     /* Insert into trigger table. */
     t = xmalloc(sizeof *t);
-    // VLOG_INFO("PT: should trigger init");
     bool disconnect_all = ovsdb_trigger_init(pDbFnTable, pContext,
         &s->up, db, &t->trigger, request, time_msec(), s->read_only,
         s->remote->role, jsonrpc_session_get_id(s->js));
     t->id = json_clone(request->id);
     hmap_insert(&s->triggers, &t->hmap_node, hash);
 
-    // VLOG_INFO("PT: should trigger complete");
-    /* Complete early if possible. */
-    if (ovsdb_trigger_is_complete(&t->trigger)) {
-        ovsdb_jsonrpc_trigger_complete(t);
-    }
 
     if (disconnect_all) {
         /* The message below is currently the only reason to disconnect all

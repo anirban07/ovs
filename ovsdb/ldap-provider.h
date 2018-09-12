@@ -59,8 +59,7 @@ struct db {
 
 #define BAIL_ON_ERROR(err) \
             if ((err) != 0) { \
-                fprintf( \
-                        stderr, \
+                VLOG_INFO( \
                         "(%d) at %s:%d", \
                         err, \
                         __FILE__, \

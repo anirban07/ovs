@@ -23,6 +23,7 @@
 #include "condition.h"
 #include "file.h"
 #include "openvswitch/json.h"
+#include "openvswitch/vlog.h"
 #include "mutation.h"
 #include "ovsdb-data.h"
 #include "ovsdb-error.h"
@@ -35,6 +36,7 @@
 #include "table.h"
 #include "timeval.h"
 #include "transaction.h"
+VLOG_DEFINE_THIS_MODULE(execution)
 
 struct ovsdb_execution {
     struct ovsdb *db;
@@ -227,6 +229,8 @@ exit:
     *resultsp = results;
     *durable = x.durable;
     ovsdb_symbol_table_destroy(x.symtab);
+
+    VLOG_INFO("PT: RESULT JSON: %s", json_to_string(results, JSSF_PRETTY));
 
     return x.txn;
 }

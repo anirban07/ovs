@@ -95,6 +95,15 @@ targets:
     cmds:
       - ./support/scripts/gen-makefile.sh
 
+  debug:
+    description: To build using debug flags
+    after:
+      - bootstrap-photon-ovs
+    watches:
+      - '**/*.mk'
+    cmds:
+      - ./support/scripts/gen-makefile.sh CFLAGS="-g"
+
   build-photon-ovs:
     description: build Open vSwitch source code for PhotonOS
     after:

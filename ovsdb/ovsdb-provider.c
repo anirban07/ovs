@@ -735,10 +735,6 @@ ovsdb_create_trigger_intf(
     t->id = json_clone(request->id);
     hmap_insert(&s->triggers, &t->hmap_node, hash);
 
-    /* Complete early if possible. */
-    if (ovsdb_trigger_is_complete(&t->trigger)) {
-        ovsdb_jsonrpc_trigger_complete(t);
-    }
 
     if (disconnect_all) {
         /* The message below is currently the only reason to disconnect all

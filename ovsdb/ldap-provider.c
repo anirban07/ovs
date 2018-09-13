@@ -570,16 +570,6 @@ ldap_ovs_evaluate_clause(
     struct ovs_clause *povs_clause OVS_UNUSED,
     char *ldap_column_name OVS_UNUSED
 ) {
-    // if (povs_clause->function == OVSDB_F_TRUE ||
-    //     povs_clause->function == OVSDB_F_FALSE) {
-    //     return povs_clause->function == OVSDB_F_TRUE;
-    // }
-    // if (strcmp(povs_clause->ldap_column_name, ldap_column_name) == 0) {
-    //     switch (povs_clause->function) {
-    //         case OVSDB_F_EQ:
-    //         break;
-    //     }
-    // }
     return true;
 }
 
@@ -1738,8 +1728,8 @@ nb_ldap_insert_helper(
             parent_table = json_string(json);
             parent_cn = get_ldap_cn_from_table(parent_table);
             char *pNewDn = NULL;
-            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s,cn=%s,%s",
-                parent_uuid, parent_cn, pDn);
+            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s%s,cn=%s,%s",
+                parent_uuid, LDAP_OBJECT_IDENTIFIER, parent_cn, pDn);
             BAIL_ON_ERROR(error);
             OVS_SAFE_FREE_STRING(pDn);
             pDn = pNewDn;
@@ -2531,7 +2521,7 @@ nb_logical_router_port_ldap_insert(
     }
 
 static uint32_t
-nb_logical_router_port_ldap_select(
+    nb_logical_router_port_ldap_select(
     PDB_INTERFACE_CONTEXT_T pContext OVS_UNUSED,
     struct ovsdb_parser *parser OVS_UNUSED,
     struct json *result OVS_UNUSED,

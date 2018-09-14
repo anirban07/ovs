@@ -539,9 +539,8 @@ OvsLdapAddImpl(
 
     error = OvsAllocateStringPrintf(
         &pElemDn,
-        "%s=%s-%s,%s",
+        "%s=%s,%s",
         LDAP_CN,
-        LDAP_OBJECT_IDENTIFIER,
         pUuid,
         pNewDn
     );
@@ -745,7 +744,8 @@ get_parent_table_from_child_table(
 static uint32_t ldap_get_all_dns(
     ovs_ldap_context_t *pConnection,
     char *child_ldap_name,
-    struct sset *pall_dns
+    struct sset *pall_dns,
+    char *baseDn
 ) {
     uint32_t error = 0;
     char *pNewDn = NULL;
@@ -757,18 +757,12 @@ static uint32_t ldap_get_all_dns(
         return 0;
     }
 
-    char *pDn = NULL;
-    GetDSERootAttribute(
-        pConnection->pLd,
-        DEFAULT_NAMING_CONTEXT,
-        &pDn
-    );
     error = OvsAllocateStringPrintf(
         &pNewDn,
         "%s=%s,%s",
         LDAP_CN,
         parent_ldap_name,
-        pDn
+        baseDn
     );
     BAIL_ON_ERROR(error);
     error = ldap_search_ext_s(
@@ -838,8 +832,8 @@ OvsLdapSearchImpl(
 ) {
     uint32_t error = 0;
     char *pNewDn = NULL;
-    LDAPMessage *res = NULL;
-    LDAPMessage *e = NULL;
+    LDAPMessage *bucketRes = NULL;
+    LDAPMessage *objectEntry = NULL;
 
     error = OvsAllocateStringPrintf(
         &pNewDn,
@@ -849,10 +843,11 @@ OvsLdapSearchImpl(
         pDn
     );
     BAIL_ON_ERROR(error);
+
     error = ldap_search_ext_s(
         pConnection->pLd,
         pNewDn,
-        LDAP_SCOPE_SUBTREE,
+        LDAP_SCOPE_ONELEVEL,
         NULL,
         NULL,
         0,
@@ -860,40 +855,41 @@ OvsLdapSearchImpl(
         NULL,
         NULL,
         0,
-        &res
+        &bucketRes
     );
-    BAIL_ON_ERROR(error);
-    VLOG_INFO("In OvsLdapSearch:\n");
-    for (
-        e = ldap_first_entry(pConnection->pLd, res);
-        e != NULL;
-        e = ldap_next_entry(pConnection->pLd, e)
-    ) {
-        char *dn = ldap_get_dn(pConnection->pLd, e);
-        // exclude top level bucket object from the results
-        // if dn starts with cn=LDAP_OBJECT_IDENTIFIER, then non-bucket
-        if (strstr(dn, LDAP_OBJECT_IDENTIFIER) == (dn + strlen(LDAP_CN) + 1)) {
-            VLOG_INFO("\tdn:%s\n", dn);
-            struct json *row = NULL;
-            error = ldap_ovs_get_matching_row(
-                e,
-                povs_condition,
-                pConnection->pLd,
-                povs_column_set,
-                pdesired_ovsdb_columns,
-                &row
-            );
-            BAIL_ON_ERROR(error)
 
-            if (row) {
-                json_array_add(
-                    presult_rows,
-                    row
-                );
-            }
+    for (
+        objectEntry = ldap_first_entry(pConnection->pLd, bucketRes);
+        objectEntry != NULL;
+        objectEntry = ldap_next_entry(pConnection->pLd, objectEntry)
+    ) {
+        VLOG_INFO("object: %s\n", ldap_get_dn(pConnection->pLd, objectEntry));
+        struct json *row = NULL;
+        error = ldap_ovs_get_matching_row(
+            objectEntry,
+            povs_condition,
+            pConnection->pLd,
+            povs_column_set,
+            pdesired_ovsdb_columns,
+            &row
+        );
+        BAIL_ON_ERROR(error)
+
+        if (row) {
+            json_array_add(
+                presult_rows,
+                row
+            );
         }
     }
+
 error:
+    if (bucketRes) {
+        ldap_msgfree(bucketRes);
+    }
+    if (objectEntry) {
+        ldap_msgfree(objectEntry);
+    }
     return error;
 }
 
@@ -1852,8 +1848,8 @@ nb_ldap_insert_helper(
             parent_table = json_string(json);
             parent_cn = get_ldap_cn_from_table(parent_table);
             char *pNewDn = NULL;
-            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s-%s,cn=%s,%s",
-                LDAP_OBJECT_IDENTIFIER, parent_uuid, parent_cn, pDn);
+            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s,cn=%s,%s",
+                parent_uuid, parent_cn, pDn);
             BAIL_ON_ERROR(error);
             OVS_SAFE_FREE_STRING(pDn);
             pDn = pNewDn;
@@ -1941,7 +1937,7 @@ nb_ldap_select_helper(
     );
     sset_add(&all_dns, baseDn);
 
-    ldap_get_all_dns(pContext->ldap_conn, class_name, &all_dns);
+    ldap_get_all_dns(pContext->ldap_conn, class_name, &all_dns, baseDn);
 
     const char *dn, *next;
     SSET_FOR_EACH_SAFE (dn, next, &all_dns) {

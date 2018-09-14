@@ -301,7 +301,6 @@ struct db {
 #define LDAP_DEFAULT_STRING "null"
 #define LDAP_DEFAULT_BOOLEAN false
 #define LDAP_DEFAULT_INTEGER 0
-#define LDAP_OBJECT_IDENTIFIER "ldap-obj"
 
 typedef struct _ovs_ldap_context_t {
     LDAP *pLd;

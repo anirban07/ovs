@@ -539,9 +539,8 @@ OvsLdapAddImpl(
 
     error = OvsAllocateStringPrintf(
         &pElemDn,
-        "%s=%s-%s,%s",
+        "%s=%s,%s",
         LDAP_CN,
-        LDAP_OBJECT_IDENTIFIER,
         pUuid,
         pNewDn
     );
@@ -1943,8 +1942,8 @@ nb_ldap_insert_helper(
             parent_table = json_string(json);
             parent_cn = get_ldap_cn_from_table(parent_table);
             char *pNewDn = NULL;
-            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s-%s,cn=%s,%s",
-                LDAP_OBJECT_IDENTIFIER, parent_uuid, parent_cn, pDn);
+            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s,cn=%s,%s",
+                parent_uuid, parent_cn, pDn);
             BAIL_ON_ERROR(error);
             OVS_SAFE_FREE_STRING(pDn);
             pDn = pNewDn;

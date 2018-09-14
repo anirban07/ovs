@@ -80,6 +80,7 @@ struct db {
 #define ERROR_OVS_INVALID_COLUMN_TYPE 800100
 #define ERROR_OVS_JSON_SYNTAX_ERROR   800101
 #define ERROR_OVS_UNKNOWN_OVS_SET_TYPE  800102
+#define ERROR_OVS_DATUM_SYNTAX_ERROR    800103
 
 #define DEFAULT_NAMING_CONTEXT "defaultNamingContext"
 
@@ -365,7 +366,7 @@ typedef enum _OVS_COLUMN_TYPE {
 struct ovs_clause {
     const char *ovsdb_column_name;
     enum ovsdb_function function;
-    struct ovsdb_datum *value;
+    struct ovsdb_datum value;
     const char *ldap_column_name;
 };
 

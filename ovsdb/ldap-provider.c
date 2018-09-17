@@ -133,6 +133,19 @@ static char *
 get_ldap_cn_from_table(
     const char *parent_table
 );
+static
+char *
+get_child_table_from_parent_table(
+    char *parent_table,
+    char *column
+);
+static
+uint32_t OvsLdapDeleteImpl(
+    ovs_ldap_context_t *pConnection,
+    char *pDn,
+    char *pUuid,
+    char *bucket
+);
 
 static
 int
@@ -805,6 +818,135 @@ error:
     }
     *pprow = prow;
     return error;
+}
+
+static
+char *
+find_child_id_to_delete(
+    struct json *wait_row,
+    struct json *update_row,
+    char *column
+) {
+    char *wait_elem = NULL;
+    char *update_elem = NULL;
+    struct json *wait_op = NULL;
+    struct json *update_op = NULL;
+    struct json *op1 = NULL;
+    struct json *op2 = NULL;
+    int i = 0;
+    int j = 0;
+    bool found = false;
+
+    if (wait_row->array.n != 1 && update_row->array.n != 1) {
+        VLOG_INFO("Inappropriate number of columns");
+
+        return NULL;
+    }
+    op1 = wait_row->array.elems[0];
+    op2 = update_row;
+    wait_op = shash_find_data(op1->object, column);
+    update_op = shash_find_data(op2->object, column);
+
+    if (!wait_op || !update_op) {
+        return NULL;
+    }
+
+    wait_elem = wait_op->array.elems[0]->string;
+    update_elem = update_op->array.elems[0]->string;
+
+    if (!strcmp(wait_elem, "set") && !strcmp(update_elem, "set")) {
+        // wait is set && delete is set ( N + 1 -> N where N >=2 )
+        wait_op = wait_op->array.elems[1];
+        update_op = update_op->array.elems[1];
+
+        for (i=0; i<wait_op->array.n; i++) {
+            found = false;
+            op1 = wait_op->array.elems[i];
+            wait_elem = op1->array.elems[1]->string;
+            for (j=0; j<update_op->array.n; j++) {
+                op2 = update_op->array.elems[j];
+                update_elem = op2->array.elems[1]->string;
+                if (!strcmp(wait_elem, update_elem)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return wait_elem;
+            }
+        }
+        return NULL;
+    } else if (!strcmp(wait_elem, "set") && !strcmp(update_elem, "uuid")) {
+        // wait is set && delete is uuid ( 2->1 )
+        update_elem = update_op->array.elems[1]->string;
+        wait_op = wait_op->array.elems[1];
+        // check the first elem
+        for (i=0; i<2; i++) {
+            op1 = wait_op->array.elems[i];
+            wait_elem = op1->array.elems[1]->string;
+            VLOG_INFO("PT: wait elem: %s", wait_elem);
+            if (strcmp(wait_elem, update_elem)) {
+                return wait_elem;
+            }
+        }
+        return NULL;
+    } else if (!strcmp(wait_elem, "uuid") && !strcmp(update_elem, "set")) {
+        // wait is uuid && delete is set ( 1->0 )
+        return wait_op->array.elems[1]->string;
+    } else {
+        VLOG_ERR("Unexpected type: wait - %s | update - %s", wait_elem, update_elem);
+        return NULL;
+    }
+}
+
+
+static
+char *
+get_child_table_from_parent_table(
+    char *parent_table,
+    char *column
+) {
+
+    if (!strcmp(parent_table, NB_GLOBAL)) {
+        if (!strcmp(column, "connections")) {
+            return CONNECTION;
+        } else if (!strcmp(column, "ssl")) {
+            return SSL;
+        }
+    } else if (!strcmp(parent_table, LOGICAL_ROUTER)) {
+        if (!strcmp(column, "ports")) {
+            return LOGICAL_ROUTER_PORT;
+        } else if (!strcmp(column, "nat")) {
+            return NAT;
+        } else if (!strcmp(column, "static_routes")) {
+            return LOGICAL_ROUTER_STATIC_ROUTE;
+        }
+    } else if (!strcmp(parent_table, LOGICAL_SWITCH)) {
+        if (!strcmp(column, "ports")) {
+            return LOGICAL_SWITCH_PORT;
+        } else if (!strcmp(column, "qos_rules")) {
+            return QOS;
+        } else if (!strcmp(column, "dns_records")) {
+            return DNS;
+        } else if (!strcmp(column, "acls")) {
+            return ACL;
+        }
+    } else if (!strcmp(parent_table, LOGICAL_ROUTER_PORT)) {
+        if (!strcmp(column, "gateway_chassis")) {
+            return GATEWAY_CHASSIS;
+        }
+    } else if (!strcmp(parent_table, LOGICAL_SWITCH_PORT)) {
+        if (!strcmp(column, "dhcpv6_options") ||
+            !strcmp(column, "dhcpv4_options")) {
+            return DHCP_OPTIONS;
+        }
+    } else {
+        VLOG_ERR("Unable to find appropriate parent table: %s", parent_table);
+        return NULL;
+    }
+
+    VLOG_ERR("Unable to find appropriate column: %s", column);
+    return NULL;
 }
 
 static
@@ -2047,6 +2189,9 @@ nb_ldap_insert_helper(
             BAIL_ON_ERROR(error);
             OVS_SAFE_FREE_STRING(pDn);
             pDn = pNewDn;
+        } else {
+            VLOG_ERR("Could not find UUID in 'parent': %s",
+                json_to_string(parent_json, JSSF_PRETTY));
         }
     }
     error = OvsLdapAddImpl(
@@ -2256,6 +2401,122 @@ error:
     return error;
 }
 
+static uint32_t
+nb_ldap_delete_helper(
+    PDB_INTERFACE_CONTEXT_T pContext,
+    struct ovsdb_parser *parser,
+    struct json *result OVS_UNUSED,
+    const struct ovs_column_set *povs_column_set OVS_UNUSED,
+    char *class_name
+) {
+    static uint32_t error = 0;
+    const struct json *where = NULL;
+    const struct json *parent_json = NULL;
+    struct json *json = NULL;
+    char *pDn = NULL;
+    char *pNewDn = NULL;
+    char *pUuid = NULL;
+    struct ds s;
+
+    // sset_init(&all_dns);
+    ds_init(&s);
+    where = ovsdb_parser_member(parser, "where", OP_ARRAY);
+    parent_json = ovsdb_parser_member(parser, "parent", OP_OBJECT);
+
+    error = GetDSERootAttribute(
+        pContext->ldap_conn->pLd,
+        DEFAULT_NAMING_CONTEXT,
+        &pDn
+    );
+    BAIL_ON_ERROR(error);
+
+    // build the DN
+    if (parent_json) {
+        json = shash_find_data(parent_json->object, "uuid");
+        if (json) {
+            const char *parent_uuid = json_string(json);
+            json = shash_find_data(parent_json->object, "table");
+            const char *parent_table = json_string(json);
+            char *parent_cn = get_ldap_cn_from_table(parent_table);
+            error = OvsAllocateStringPrintf(&pNewDn, "cn=%s,cn=%s,%s",
+                parent_uuid, parent_cn, pDn);
+            BAIL_ON_ERROR(error);
+            OVS_SAFE_FREE_STRING(pDn);
+            pDn = pNewDn;
+        }
+    }
+
+    struct json *op = where->array.elems[0];
+    if (op->array.n != 3) {
+        VLOG_INFO("JSON where condition not size 3: %s", json_to_string(op, JSSF_PRETTY));
+        BAIL_ON_ERROR(ERROR_OVS_INVALID_PARAMETER);
+    }
+    if (strcmp(op->array.elems[0]->string, "_uuid")) {
+        VLOG_INFO("JSON where condition is not for _uuid: %s", json_to_string(op, JSSF_PRETTY));
+        BAIL_ON_ERROR(ERROR_OVS_INVALID_PARAMETER);
+    }
+
+    op = op->array.elems[2];
+    if (op->array.n != 2) {
+        VLOG_INFO("JSON where condition entries are not size 2: %s", json_to_string(op, JSSF_PRETTY));
+    }
+
+    if (strcmp(op->array.elems[0]->string, "uuid")) {
+        VLOG_INFO("JSON where condition is not for 'uuid': %s", json_to_string(op, JSSF_PRETTY));
+    }
+
+    pUuid = op->array.elems[1]->string;
+
+    #if 0
+    error = OvsAllocateStringPrintf(&pNewDn, "cn=%s,cn=%s,%s", pUuid,
+        class_name, pDn);
+    BAIL_ON_ERROR(error);
+    free(pDn);
+    pDn = pNewDn;
+    #endif
+
+    // TODO implement DFS delete
+    OvsLdapDeleteImpl(pContext->ldap_conn, pDn, pUuid, class_name);
+    BAIL_ON_ERROR(error);
+
+error:
+    OVS_SAFE_FREE_STRING(pDn);
+
+    return error;
+}
+
+static
+uint32_t OvsLdapDeleteImpl(
+    ovs_ldap_context_t *pConnection,
+    char *pDn,
+    char *pUuid,
+    char *bucket
+) {
+    char *pElemDn = NULL;
+    char *pBucketDn = NULL;
+    uint32_t error = 0;
+
+    error = OvsAllocateStringPrintf(&pBucketDn, "cn=%s,%s", bucket, pDn);
+    BAIL_ON_ERROR(error);
+
+    error = OvsAllocateStringPrintf(&pElemDn, "cn=%s,cn=%s,%s", pUuid, bucket,
+        pDn);
+    BAIL_ON_ERROR(error);
+
+    VLOG_INFO("PT: Entry to delete is: %s", pElemDn);
+    error = ldap_delete_ext_s(pConnection->pLd, pElemDn, NULL, NULL);
+    BAIL_ON_ERROR(error);
+
+    VLOG_INFO("PT: Bucket to delete is: %s", pBucketDn);
+    error = ldap_delete_ext_s(pConnection->pLd, pBucketDn, NULL, NULL);
+
+error:
+    OVS_SAFE_FREE_STRING(pElemDn);
+    OVS_SAFE_FREE_STRING(pBucketDn);
+
+    return error;
+}
+
 static
 struct ovs_column_set
 nb_north_bound_ldap_get_column_set(void) {
@@ -2348,10 +2609,14 @@ nb_north_bound_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_north_bound_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_GLOBAL_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -2481,10 +2746,14 @@ nb_connection_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_connection_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_CONN_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -2614,10 +2883,14 @@ nb_ssl_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_ssl_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_SSL_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -2727,10 +3000,14 @@ nb_address_set_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_address_set_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_ADDRESS_SET_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -2866,9 +3143,14 @@ nb_logical_router_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
-    return error;
+    VLOG_INFO("nb_logical_router_ldap_delete called\n");
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LOGICAL_RT_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3003,10 +3285,14 @@ nb_logical_router_port_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_logical_router_port_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LOGICAL_RT_PORT_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3126,10 +3412,14 @@ nb_gateway_chassis_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_gateway_chassis_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_GW_CHASSIS_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3253,10 +3543,14 @@ nb_nat_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_nat_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_NAT_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3375,10 +3669,14 @@ nb_logical_router_static_route_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_logical_router_static_route_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LOGICAL_RT_STATIC_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3494,7 +3792,7 @@ nb_load_balancer_ldap_delete(
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
     VLOG_INFO("nb_load_balancer_ldap_delete called\n");
-    return nb_ldap_update_helper(
+    return nb_ldap_delete_helper(
         pContext,
         parser,
         result,
@@ -3510,10 +3808,14 @@ nb_load_balancer_ldap_update(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_load_balancer_ldap_update called\n");
-    return error;
+    return nb_ldap_update_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LB_OBJ_CLASS_NAME
+    );
 }
 
 LDAP_FUNCTION_TABLE
@@ -3631,10 +3933,14 @@ nb_logical_switch_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_logical_switch_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LOGICAL_SW_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3799,10 +4105,14 @@ nb_logical_switch_port_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_logical_switch_port_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_LOGICAL_SW_PORT_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -3912,10 +4222,14 @@ nb_dhcp_options_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_dhcp_options_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_DHCP_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -4035,10 +4349,14 @@ nb_qos_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_qos_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_QOS_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -4143,10 +4461,14 @@ nb_dns_config_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_dns_config_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_DNS_RECORDS_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -4281,10 +4603,14 @@ nb_acl_ldap_delete(
     struct json *result OVS_UNUSED,
     const struct ovs_column_set *povs_column_set OVS_UNUSED
 ) {
-    static uint32_t error = 0;
-    result->count = 0;
     VLOG_INFO("nb_acl_ldap_delete called\n");
-    return error;
+    return nb_ldap_delete_helper(
+        pContext,
+        parser,
+        result,
+        povs_column_set,
+        NB_ACL_OBJ_CLASS_NAME
+    );
 }
 
 static uint32_t
@@ -4499,7 +4825,9 @@ ldap_execute_compose_intf(
         n_operations = params->array.n - 1;
 
         struct json *aggr_params = NULL;
+        VLOG_INFO("PT: params BEFORE: %s", json_to_string(params, JSSF_PRETTY));
         aggr_params = aggregate_transact(params, n_operations, resultsp);
+        VLOG_INFO("PT: params AFTER: %s", json_to_string(aggr_params, JSSF_PRETTY));
         n_operations = aggr_params->array.n - 1;
         for (i = 1; i <= n_operations; i++) {
             struct json *operation = aggr_params->array.elems[i];
@@ -4613,7 +4941,8 @@ aggregate_transact(const struct json *params, size_t n_operations,
 #define FOUND_UPDATE (1<<0)
 #define FOUND_INSERT (1<<1)
 #define FOUND_WAIT (1<<2)
-#define NEEDS_AGGREGATE (FOUND_WAIT | FOUND_INSERT | FOUND_UPDATE)
+#define AGGREGATE_INSERT (FOUND_WAIT | FOUND_INSERT | FOUND_UPDATE)
+#define AGGREGATE_DELETE (FOUND_WAIT | FOUND_UPDATE)
 
     for (i = 1; i <= n_operations; i++) {
         struct json *operation = params->array.elems[i];
@@ -4657,7 +4986,7 @@ aggregate_transact(const struct json *params, size_t n_operations,
         }
     }
 
-    if (ops != NEEDS_AGGREGATE) {
+    if (ops != AGGREGATE_INSERT && ops != AGGREGATE_DELETE) {
         return json_deep_clone(params);
     }
 
@@ -4671,7 +5000,7 @@ aggregate_transact(const struct json *params, size_t n_operations,
 
     op = shash_find_data(update->object, "where");
     if (!op) {
-        VLOG_INFO("JSON doesn't have 'where': %s", json_to_string(op, JSSF_PRETTY));
+        VLOG_INFO("JSON doesn't have 'where': %s", json_to_string(update, JSSF_PRETTY));
         return json_deep_clone(params);
     }
     if (op->array.n != 1) {
@@ -4706,11 +5035,64 @@ aggregate_transact(const struct json *params, size_t n_operations,
     json = json_string_create(parent_table);
     json_object_put(new_param, "table", json);
 
-    json = json_deep_clone(insert);
+    if (ops == AGGREGATE_INSERT) {
+        json = json_deep_clone(insert);
+    } else if (ops == AGGREGATE_DELETE) {
+        char *column = NULL;
+        char *child_ldap_obj = NULL;
+        char *child_id = NULL;
+        struct shash_node *node = NULL;
+        struct json *wait_row = NULL;
+        struct json *update_row = NULL;
+        json = json_object_create();
+        op = shash_find_data(update->object, "row");
+        if (!op) {
+            VLOG_INFO("JSON doesn't have 'row': %s", json_to_string(update, JSSF_PRETTY));
+            json_destroy(json);
+            return json_deep_clone(params);
+        }
+        update_row = op;
+
+        SHASH_FOR_EACH(node, op->object) {
+            if (column != NULL) {
+                VLOG_INFO("JSON has multiple columns: %s", json_to_string(op, JSSF_PRETTY));
+                json_destroy(json);
+                return json_deep_clone(params);
+            }
+            column = node->name;
+        }
+        if (column == NULL) {
+            VLOG_INFO("JSON has no column: %s", json_to_string(op, JSSF_PRETTY));
+            json_destroy(json);
+            return json_deep_clone(params);
+        }
+        child_ldap_obj = get_child_table_from_parent_table(parent_table, column);
+
+        // find the diff
+        wait_row = shash_find_data(wait->object, "rows");
+        child_id = find_child_id_to_delete(wait_row, update_row, column);
+        if (child_id == NULL) {
+            VLOG_INFO("PT: unable to find ID: wait_row: %s, update_row: %s, column: %s",
+                json_to_string(wait_row, JSSF_PRETTY), json_to_string(update_row, JSSF_PRETTY), column);
+            json_destroy(json);
+            return json_deep_clone(params);
+        }
+
+        json_object_put(json, "table", json_string_create(child_ldap_obj));
+        json_object_put(json, "op", json_string_create("delete"));
+        op = json_array_create_2(json_string_create("uuid"), json_string_create(child_id));
+        op = json_array_create_3(json_string_create("_uuid"), json_string_create("=="), op);
+        op = json_array_create_1(op);
+        json_object_put(json, "where", op);
+        VLOG_INFO("PT: json array: %s", json_to_string(op, JSSF_PRETTY));
+    } else {
+        VLOG_ERR("Shouldn't be here!!! - Insert: %lu, Delete: %lu, found: %lu",
+            AGGREGATE_INSERT, AGGREGATE_DELETE, ops);
+    }
 
     json_object_put(json, "parent", new_param);
 
-    VLOG_INFO("Updated Insert Query: %s", json_to_string(json, JSSF_PRETTY));
+    VLOG_INFO("Updated Query: %s", json_to_string(json, JSSF_PRETTY));
     return json_array_create_2(json_null_create(), json);
 }
 

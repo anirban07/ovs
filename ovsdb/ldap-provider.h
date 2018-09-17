@@ -68,7 +68,7 @@ struct db {
                 goto error; \
             }
 
-
+#define LOG_LDAP_RESULT
 
 #define LDAP_PORT 389
 #define LDAP_CN "cn"
@@ -293,7 +293,7 @@ struct db {
 #define OVSDB_STATUS "status"
 #define OVSDB_TAG "tag"
 #define OVSDB_TAG_REQUEST "tag_request"
-#define OVSDB_UUID "uuid"
+#define OVSDB_UUID "_uuid"
 #define OVSDB_VIPS "vips"
 
 #define KEY_SEP '|'
@@ -326,7 +326,7 @@ typedef struct _ovs_map_t {
 
 typedef struct _ovs_set_t {
     set_type_t type;
-    char *pValue;
+    struct ds *pValue;
 } ovs_set_t;
 
 typedef struct _DB_INTERFACE_CONTEXT_T {
@@ -494,6 +494,17 @@ OvsLdapSearchImpl(
     struct sset *desired_ovsdb_columns,
     struct json *presult_rows
 );
+
+uint32_t
+OvsLdapUpdateImpl(
+    ovs_ldap_context_t *pConnection,
+    LDAPMod **attrs,
+    const char *pDn,
+    char *bucket,
+    const struct ovs_column_set *povs_column_set,
+    struct ovs_condition *povs_condition,
+    int *pnum_updated
+) ;
 
 uint32_t
 ldap_open_context(DB_INTERFACE_CONTEXT_T **ppContext, int argc, ...);

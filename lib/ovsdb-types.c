@@ -41,6 +41,8 @@ const struct ovsdb_type ovsdb_type_uuid =
 
 const struct ovsdb_type ovsdb_type_string_set =
     OVSDB_TYPE_SET_INITIALIZER(OVSDB_BASE_STRING_INIT);
+const struct ovsdb_type ovsdb_type_uuid_set =
+    OVSDB_TYPE_SET_INITIALIZER(OVSDB_BASE_UUID_INIT);
 const struct ovsdb_type ovsdb_type_string_string_map =
     OVSDB_TYPE_MAP_INITIALIZER(OVSDB_BASE_STRING_INIT, OVSDB_BASE_STRING_INIT);
 const struct ovsdb_type ovsdb_type_string_integer_map =

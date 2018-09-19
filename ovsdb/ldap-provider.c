@@ -3096,7 +3096,7 @@ nb_logical_router_ldap_get_column_set(void) {
         {ovs_name, OVS_COLUMN_STRING, ovsdb_name, &ovsdb_type_string},
         {ovs_port_set, OVS_COLUMN_SET, ovsdb_port_set, &ovsdb_type_uuid_set},
         {ovs_static_routes_set, OVS_COLUMN_SET, ovsdb_static_routes_set, &ovsdb_type_uuid_set},
-        {ovs_nat, OVS_COLUMN_STRING, ovsdb_nat, &ovsdb_type_string},
+        {ovs_nat, OVS_COLUMN_SET, ovsdb_nat, &ovsdb_type_uuid_set},
         {ovs_lb_set, OVS_COLUMN_SET, ovsdb_lb_set, &ovsdb_type_uuid_set},
         {ovs_options, OVS_COLUMN_MAP, ovsdb_options, &ovsdb_type_string_string_map},
         {ovs_external_ids, OVS_COLUMN_MAP, ovsdb_external_ids, &ovsdb_type_string_string_map},

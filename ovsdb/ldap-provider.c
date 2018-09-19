@@ -1019,6 +1019,10 @@ static uint32_t ldap_get_all_dns(
         0,
         &res
     );
+    if (error == LDAP_NO_SUCH_OBJECT) {
+        error = LDAP_SUCCESS;
+        goto error;
+    }
     BAIL_ON_ERROR(error);
 
     for (
@@ -1053,9 +1057,7 @@ static uint32_t ldap_get_all_dns(
             error = LDAP_SUCCESS;
             continue;
         }
-        if (error != LDAP_SUCCESS) {
-            BAIL_ON_ERROR(error)
-        }
+        BAIL_ON_ERROR(error)
         sset_add(pall_dns, parentDn);
     }
 error:
@@ -1099,6 +1101,10 @@ OvsLdapSearchImpl(
         0,
         &bucketRes
     );
+    if (error == LDAP_NO_SUCH_OBJECT) {
+        error = LDAP_SUCCESS;
+        goto error;
+    }
     BAIL_ON_ERROR(error)
 
     for (
@@ -1173,12 +1179,11 @@ OvsLdapUpdateImpl(
         0,
         &bucketRes
     );
-    if (error != LDAP_SUCCESS && error != LDAP_NO_SUCH_OBJECT) {
-        BAIL_ON_ERROR(error)
-    } else if (error == LDAP_NO_SUCH_OBJECT) {
+    if (error == LDAP_NO_SUCH_OBJECT) {
         error = LDAP_SUCCESS;
         goto error;
     }
+    BAIL_ON_ERROR(error)
 
     for (
         objectEntry = ldap_first_entry(pConnection->pLd, bucketRes);

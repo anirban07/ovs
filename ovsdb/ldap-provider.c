@@ -144,7 +144,8 @@ uint32_t OvsLdapDeleteImpl(
     ovs_ldap_context_t *pConnection,
     char *pDn,
     char *pUuid,
-    char *bucket
+    char *bucket,
+    int *num_deleted
 );
 
 static
@@ -2214,11 +2215,8 @@ nb_ldap_insert_helper(
     json_object_put(
         result,
         "uuid",
-        wrap_json(
-            "uuid",
-            ovsdb_datum_to_json(
-                &uuid_datum, &ovsdb_type_uuid
-            )
+        ovsdb_datum_to_json(
+            &uuid_datum, &ovsdb_type_uuid
         )
     );
     ovsdb_datum_destroy(&uuid_datum, &ovsdb_type_uuid);
@@ -2422,6 +2420,7 @@ nb_ldap_delete_helper(
     char *pNewDn = NULL;
     char *pUuid = NULL;
     struct ds s;
+    int num_deleted = 0;
 
     // sset_init(&all_dns);
     ds_init(&s);
@@ -2481,8 +2480,16 @@ nb_ldap_delete_helper(
     #endif
 
     // TODO implement DFS delete
-    OvsLdapDeleteImpl(pContext->ldap_conn, pDn, pUuid, class_name);
+    OvsLdapDeleteImpl(pContext->ldap_conn, pDn, pUuid, class_name, &num_deleted);
     BAIL_ON_ERROR(error);
+    json_object_put(
+        result,
+        "count",
+        json_integer_create(num_deleted)
+    );
+    #ifdef LOG_LDAP_RESULT
+    VLOG_INFO("delete result:\n%s\n", json_to_string(result, JSSF_PRETTY));
+    #endif
 
 error:
     OVS_SAFE_FREE_STRING(pDn);
@@ -2495,7 +2502,8 @@ uint32_t OvsLdapDeleteImpl(
     ovs_ldap_context_t *pConnection,
     char *pDn,
     char *pUuid,
-    char *bucket
+    char *bucket,
+    int *num_deleted
 ) {
     char *pElemDn = NULL;
     char *pBucketDn = NULL;
@@ -2511,6 +2519,7 @@ uint32_t OvsLdapDeleteImpl(
     // VLOG_INFO("PT: Entry to delete is: %s", pElemDn);
     error = ldap_delete_ext_s(pConnection->pLd, pElemDn, NULL, NULL);
     BAIL_ON_ERROR(error);
+    (*num_deleted)++;
 
     // VLOG_INFO("PT: Bucket to delete is: %s", pBucketDn);
     error = ldap_delete_ext_s(pConnection->pLd, pBucketDn, NULL, NULL);
@@ -2518,6 +2527,7 @@ uint32_t OvsLdapDeleteImpl(
 error:
     OVS_SAFE_FREE_STRING(pElemDn);
     OVS_SAFE_FREE_STRING(pBucketDn);
+
 
     return error;
 }
@@ -4878,6 +4888,7 @@ ldap_execute_compose_intf(
             }
             json_array_add(results, result);
         }
+        *resultsp = results;
         json_destroy(aggr_params);
     }
 

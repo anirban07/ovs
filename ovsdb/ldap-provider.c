@@ -884,7 +884,7 @@ find_child_id_to_delete(
         for (i=0; i<2; i++) {
             op1 = wait_op->array.elems[i];
             wait_elem = op1->array.elems[1]->string;
-            VLOG_INFO("PT: wait elem: %s", wait_elem);
+            // VLOG_INFO("PT: wait elem: %s", wait_elem);
             if (strcmp(wait_elem, update_elem)) {
                 return wait_elem;
             }
@@ -2503,11 +2503,11 @@ uint32_t OvsLdapDeleteImpl(
         pDn);
     BAIL_ON_ERROR(error);
 
-    VLOG_INFO("PT: Entry to delete is: %s", pElemDn);
+    // VLOG_INFO("PT: Entry to delete is: %s", pElemDn);
     error = ldap_delete_ext_s(pConnection->pLd, pElemDn, NULL, NULL);
     BAIL_ON_ERROR(error);
 
-    VLOG_INFO("PT: Bucket to delete is: %s", pBucketDn);
+    // VLOG_INFO("PT: Bucket to delete is: %s", pBucketDn);
     error = ldap_delete_ext_s(pConnection->pLd, pBucketDn, NULL, NULL);
 
 error:
@@ -4825,9 +4825,9 @@ ldap_execute_compose_intf(
         n_operations = params->array.n - 1;
 
         struct json *aggr_params = NULL;
-        VLOG_INFO("PT: params BEFORE: %s", json_to_string(params, JSSF_PRETTY));
+        // VLOG_INFO("PT: params BEFORE: %s", json_to_string(params, JSSF_PRETTY));
         aggr_params = aggregate_transact(params, n_operations, resultsp);
-        VLOG_INFO("PT: params AFTER: %s", json_to_string(aggr_params, JSSF_PRETTY));
+        // VLOG_INFO("PT: params AFTER: %s", json_to_string(aggr_params, JSSF_PRETTY));
         n_operations = aggr_params->array.n - 1;
         for (i = 1; i <= n_operations; i++) {
             struct json *operation = aggr_params->array.elems[i];
@@ -5072,8 +5072,8 @@ aggregate_transact(const struct json *params, size_t n_operations,
         wait_row = shash_find_data(wait->object, "rows");
         child_id = find_child_id_to_delete(wait_row, update_row, column);
         if (child_id == NULL) {
-            VLOG_INFO("PT: unable to find ID: wait_row: %s, update_row: %s, column: %s",
-                json_to_string(wait_row, JSSF_PRETTY), json_to_string(update_row, JSSF_PRETTY), column);
+            // VLOG_INFO("PT: unable to find ID: wait_row: %s, update_row: %s, column: %s",
+                // json_to_string(wait_row, JSSF_PRETTY), json_to_string(update_row, JSSF_PRETTY), column);
             json_destroy(json);
             return json_deep_clone(params);
         }
@@ -5084,15 +5084,15 @@ aggregate_transact(const struct json *params, size_t n_operations,
         op = json_array_create_3(json_string_create("_uuid"), json_string_create("=="), op);
         op = json_array_create_1(op);
         json_object_put(json, "where", op);
-        VLOG_INFO("PT: json array: %s", json_to_string(op, JSSF_PRETTY));
+        // VLOG_INFO("PT: json array: %s", json_to_string(op, JSSF_PRETTY));
     } else {
-        VLOG_ERR("Shouldn't be here!!! - Insert: %lu, Delete: %lu, found: %lu",
-            AGGREGATE_INSERT, AGGREGATE_DELETE, ops);
+        // VLOG_ERR("Shouldn't be here!!! - Insert: %lu, Delete: %lu, found: %lu",
+            // AGGREGATE_INSERT, AGGREGATE_DELETE, ops);
     }
 
     json_object_put(json, "parent", new_param);
 
-    VLOG_INFO("Updated Query: %s", json_to_string(json, JSSF_PRETTY));
+    // VLOG_INFO("Updated Query: %s", json_to_string(json, JSSF_PRETTY));
     return json_array_create_2(json_null_create(), json);
 }
 

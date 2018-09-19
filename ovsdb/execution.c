@@ -230,7 +230,7 @@ exit:
     *durable = x.durable;
     ovsdb_symbol_table_destroy(x.symtab);
 
-    VLOG_INFO("PT: RESULT JSON: %s", json_to_string(results, JSSF_PRETTY));
+    // VLOG_INFO("PT: RESULT JSON: %s", json_to_string(results, JSSF_PRETTY));
 
     return x.txn;
 }

@@ -1,0 +1,13 @@
+ovn-nbctl ls-add test-switch-1
+ovn-nbctl lsp-add test-switch-1 test-switch-port-1
+ovn-nbctl lsp-set-options test-switch-port-1 key1=value1 key2=value2
+ovn-nbctl lsp-set-enabled test-switch-port-1 enabled
+
+ovsdb-client transact unix:/var/run/openvswitch/ovnnb_db.sock "[\"OVN_Northbound\",{\"where\":[[\"enabled\",\"==\",true]],\"op\":\"select\",\"table\":\"Logical_Switch_Port\"}]"
+
+ovn-nbctl lsp-del test-switch-port-1
+ovn-nbctl ls-del test-switch-1
+
+ovsdb-client transact unix:/var/run/openvswitch/ovnnb_db.sock "[\"OVN_Northbound\",{\"where\":[[\"_uuid\",\"==\",[\"uuid\",\"08222bed-f5bd-478d-ad93-0c71436282ab\"]]],\"op\":\"update\",\"row\":{\"enabled\":true},\"table\":\"Logical_Router_Port\"}]"
+ovsdb-client transact unix:/var/run/openvswitch/ovnnb_db.sock "[\"OVN_Northbound\",{\"where\":[[\"_uuid\",\"==\",[\"uuid\",\"b31ac896-fc13-4ee3-b5f3-3f6d01f76b15\"]]],\"op\":\"update\",\"row\":{\"external_ids\":[\"map\",[[\"key1\",\"value1\"]]]},\"table\":\"Logical_Router_Port\"}]"
+
